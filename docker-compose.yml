@@ -1,0 +1,86 @@
+services:
+  # -------------------------------------------------------------
+  # Redis Cache & PubSub
+  # -------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: pms-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pms-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------
+  # Backend API Service (Node.js / Express)
+  # -------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pms-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_ENABLED=true
+    env_file:
+      - ./backend/.env.development
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - pms-network
+
+  # -------------------------------------------------------------
+  # Frontend Web App (Next.js 14 Standalone)
+  # -------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_BACKEND_IP=${NEXT_PUBLIC_BACKEND_IP:-192.168.0.10}
+        - NEXT_PUBLIC_BACKEND_PORT=${NEXT_PUBLIC_BACKEND_PORT:-5000}
+        - NEXT_PUBLIC_BACKEND_PROTOCOL=${NEXT_PUBLIC_BACKEND_PROTOCOL:-http}
+        - NEXT_PUBLIC_SOCKET_IP=${NEXT_PUBLIC_SOCKET_IP:-192.168.0.10}
+        - NEXT_PUBLIC_SOCKET_PORT=${NEXT_PUBLIC_SOCKET_PORT:-5000}
+        - NEXT_PUBLIC_SOCKET_PROTOCOL=${NEXT_PUBLIC_SOCKET_PROTOCOL:-http}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://192.168.0.10:5000/api/v1}
+        - NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL:-http://192.168.0.10:5000}
+    container_name: pms-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./frontend/.env.development
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    depends_on:
+      - backend
+    networks:
+      - pms-network
+
+volumes:
+  redis_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  pms-network:
+    driver: bridge
