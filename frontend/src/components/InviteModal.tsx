@@ -240,7 +240,8 @@ export const InviteModal: React.FC<InviteModalProps> = ({
         defaultRole,
         workspaceId: currentWorkspace?._id,
         projectId: selectedProjectId || undefined,
-        teamId: selectedTeamId || undefined
+        teamId: selectedTeamId || undefined,
+        frontendUrl: typeof window !== 'undefined' ? window.location.origin : undefined
       };
 
       const res = await api.post('/invites/bulk', payload);
@@ -265,10 +266,28 @@ export const InviteModal: React.FC<InviteModalProps> = ({
     }
   });
 
+  const getNormalizedInviteLink = (rawLink?: string, token?: string) => {
+    if (typeof window !== 'undefined') {
+      if (token) {
+        return `${window.location.origin}/invite/${token}`;
+      }
+      if (rawLink) {
+        try {
+          const url = new URL(rawLink);
+          return `${window.location.origin}${url.pathname}${url.search}`;
+        } catch (_) {
+          return rawLink;
+        }
+      }
+    }
+    return rawLink || '';
+  };
+
   if (!isOpen || !isMounted) return null;
 
   const handleCopyLink = (link: string, idx: number) => {
-    navigator.clipboard.writeText(link);
+    const normalized = getNormalizedInviteLink(link);
+    navigator.clipboard.writeText(normalized);
     setCopiedIdx(idx);
     setTimeout(() => setCopiedIdx(null), 2500);
   };
@@ -353,7 +372,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                   <div className="flex items-center gap-2 bg-white border border-[#0F172A]/10 rounded-lg p-2">
                     <input
                       readOnly
-                      value={bulkResult.inviteLink}
+                      value={getNormalizedInviteLink(bulkResult.inviteLink, bulkResult.token || (resultRecipients[0] as any)?.token)}
                       className="text-xs font-mono text-[#0F172A] bg-transparent outline-none flex-1 truncate"
                     />
                     <button
@@ -388,7 +407,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                       const email = res.email;
                       const name = res.name || email.split('@')[0];
                       const role = res.role || bulkResult.role || defaultRole;
-                      const link = res.inviteLink || bulkResult.inviteLink;
+                      const link = getNormalizedInviteLink(res.inviteLink || bulkResult.inviteLink, res.token || bulkResult.token);
 
                       return (
                         <div

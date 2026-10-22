@@ -49,6 +49,62 @@ const checkTeamManagePermission = async (workspace, user, projectId = null) => {
   return false;
 };
 
+// Helper to sync team members to any project referencing this team (by name or projectId)
+const syncTeamToProjects = async (team) => {
+  try {
+    const projects = await Project.find({
+      workspaceId: team.workspaceId,
+      $or: [
+        { _id: team.projectId },
+        { 'teams.name': { $regex: new RegExp(`^${team.name}$`, 'i') } }
+      ]
+    });
+
+    for (const project of projects) {
+      let changed = false;
+      if (!project.teams) project.teams = [];
+      const pTeam = project.teams.find((t) => t.name.toLowerCase() === team.name.toLowerCase());
+      if (pTeam) {
+        pTeam.leadId = team.leadId || pTeam.leadId || null;
+        pTeam.members = team.members;
+        changed = true;
+      } else {
+        project.teams.push({
+          name: team.name,
+          key: team.key,
+          color: team.color,
+          icon: team.icon,
+          description: team.description,
+          leadId: team.leadId || null,
+          members: team.members
+        });
+        changed = true;
+      }
+
+      // Also ensure all team members and team lead are in project.members
+      const allTeamUserIds = new Set([
+        ...(team.leadId ? [team.leadId.toString()] : []),
+        ...(team.members || []).map((m) => (m._id || m).toString())
+      ]);
+
+      if (!project.members) project.members = [];
+      for (const uid of allTeamUserIds) {
+        const exists = project.members.some((m) => m.userId && (m.userId._id || m.userId).toString() === uid);
+        if (!exists) {
+          project.members.push({ userId: uid, role: 'MEMBER' });
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await project.save();
+      }
+    }
+  } catch (err) {
+    console.error('[syncTeamToProjects Error]:', err.message);
+  }
+};
+
 // @desc    Get all teams in a workspace / organization
 // @route   GET /api/v1/teams
 // @access  Private
@@ -198,30 +254,8 @@ const createTeam = asyncHandler(async (req, res) => {
     updatedBy: req.user._id
   });
 
-  // If associated with a project, sync to Project.teams
-  if (projectId) {
-    try {
-      const project = await Project.findById(projectId);
-      if (project) {
-        if (!project.teams) project.teams = [];
-        const existsInProj = project.teams.some((t) => t.name.toLowerCase() === cleanName.toLowerCase());
-        if (!existsInProj) {
-          project.teams.push({
-            name: cleanName,
-            key: cleanKey,
-            color,
-            icon,
-            description,
-            leadId: leadId || null,
-            members: Array.from(memberSet)
-          });
-          await project.save();
-        }
-      }
-    } catch (err) {
-      console.error('[Sync Team to Project Error]:', err.message);
-    }
-  }
+  // Synchronize team members to projects
+  await syncTeamToProjects(team);
 
   const populated = await Team.findById(team._id)
     .populate('leadId', 'name email avatar jobTitle role')
@@ -286,6 +320,9 @@ const updateTeam = asyncHandler(async (req, res) => {
   team.updatedBy = req.user._id;
   await team.save();
 
+  // Synchronize team members to projects
+  await syncTeamToProjects(team);
+
   const populated = await Team.findById(team._id)
     .populate('leadId', 'name email avatar jobTitle role')
     .populate('members', 'name email avatar jobTitle role department')
@@ -333,6 +370,9 @@ const addTeamMembers = asyncHandler(async (req, res) => {
   team.updatedBy = req.user._id;
   await team.save();
 
+  // Synchronize team members to projects
+  await syncTeamToProjects(team);
+
   const populated = await Team.findById(team._id)
     .populate('leadId', 'name email avatar jobTitle role')
     .populate('members', 'name email avatar jobTitle role department')
@@ -373,6 +413,9 @@ const removeTeamMember = asyncHandler(async (req, res) => {
 
   team.updatedBy = req.user._id;
   await team.save();
+
+  // Synchronize team members to projects
+  await syncTeamToProjects(team);
 
   const populated = await Team.findById(team._id)
     .populate('leadId', 'name email avatar jobTitle role')

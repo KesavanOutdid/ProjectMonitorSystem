@@ -194,13 +194,83 @@ const createProject = asyncHandler(async (req, res) => {
 const getProjectById = asyncHandler(async (req, res) => {
   const { projectId } = req.params;
 
-  const project = await Project.findById(projectId)
+  let project = await Project.findById(projectId)
     .populate('leadId', 'name email avatar')
-    .populate('members.userId', 'name email avatar');
+    .populate('members.userId', 'name email avatar jobTitle role department');
 
   if (!project) {
     return res.status(404).json({ success: false, error: 'Project not found' });
   }
+
+  // Synchronize teams from Team collection for this workspace into project
+  try {
+    const Team = require('../models/Team');
+    const globalTeams = await Team.find({
+      workspaceId: project.workspaceId,
+      isDeleted: { $ne: true },
+      isArchived: { $ne: true }
+    }).lean();
+
+    let projectNeedsSave = false;
+    if (!project.teams) project.teams = [];
+
+    for (const gt of globalTeams) {
+      const pTeam = project.teams.find((t) => t.name.toLowerCase() === gt.name.toLowerCase());
+      if (pTeam) {
+        const currentPTeamMembers = new Set((pTeam.members || []).map((m) => (m._id || m).toString()));
+        const gtMembers = (gt.members || []).map((m) => (m._id || m).toString());
+        for (const mid of gtMembers) {
+          if (!currentPTeamMembers.has(mid)) {
+            pTeam.members.push(mid);
+            projectNeedsSave = true;
+          }
+        }
+        if (gt.leadId && (!pTeam.leadId || pTeam.leadId.toString() !== gt.leadId.toString())) {
+          pTeam.leadId = gt.leadId;
+          projectNeedsSave = true;
+        }
+      } else {
+        project.teams.push({
+          name: gt.name,
+          key: gt.key,
+          color: gt.color,
+          icon: gt.icon,
+          description: gt.description,
+          leadId: gt.leadId || null,
+          members: gt.members || []
+        });
+        projectNeedsSave = true;
+      }
+
+      // Also ensure all team members and lead are in project.members
+      const teamUserIds = [
+        ...(gt.leadId ? [gt.leadId.toString()] : []),
+        ...(gt.members || []).map((m) => (m._id || m).toString())
+      ];
+      for (const uid of teamUserIds) {
+        const inProjMembers = project.members.some((m) => m.userId && (m.userId._id || m.userId).toString() === uid);
+        if (!inProjMembers) {
+          project.members.push({ userId: uid, role: 'MEMBER' });
+          projectNeedsSave = true;
+        }
+      }
+    }
+
+    if (projectNeedsSave) {
+      await project.save();
+      project = await Project.findById(projectId)
+        .populate('leadId', 'name email avatar')
+        .populate('members.userId', 'name email avatar jobTitle role department');
+    }
+  } catch (err) {
+    console.error('[getProjectById Team Sync Error]:', err.message);
+  }
+
+  // Populate teams.leadId and teams.members on the returned project object
+  await project.populate([
+    { path: 'teams.leadId', select: 'name email avatar jobTitle role' },
+    { path: 'teams.members', select: 'name email avatar jobTitle role department' }
+  ]);
 
   const workspace = await Workspace.findById(project.workspaceId);
   const isOrgAdmin = req.user.role === 'SUPER_ADMIN' || req.user.role === 'ORG_ADMIN';
@@ -282,7 +352,7 @@ const getProjectMembers = asyncHandler(async (req, res) => {
     });
   }
 
-  // 5. Team Leads in Project Teams
+  // 5. Team Leads and Team Members in Project Teams
   if (project.teams) {
     project.teams.forEach((t) => {
       if (t.leadId) {
@@ -292,8 +362,40 @@ const getProjectMembers = asyncHandler(async (req, res) => {
           roleMap.set(tLeadStr, 'TEAM_LEAD');
         }
       }
+      if (Array.isArray(t.members)) {
+        t.members.forEach((tm) => {
+          const tmStr = (tm._id || tm).toString();
+          userIds.add(tmStr);
+          if (!roleMap.has(tmStr)) {
+            roleMap.set(tmStr, 'MEMBER');
+          }
+        });
+      }
     });
   }
+
+  // 6. Global Workspace Teams referencing this project or workspace
+  try {
+    const Team = require('../models/Team');
+    const globalTeams = await Team.find({
+      workspaceId: project.workspaceId,
+      isDeleted: { $ne: true },
+      isArchived: { $ne: true }
+    }).lean();
+
+    globalTeams.forEach((gt) => {
+      if (gt.leadId) {
+        const lid = (gt.leadId._id || gt.leadId).toString();
+        userIds.add(lid);
+        if (!roleMap.has(lid)) roleMap.set(lid, 'TEAM_LEAD');
+      }
+      (gt.members || []).forEach((m) => {
+        const mid = (m._id || m).toString();
+        userIds.add(mid);
+        if (!roleMap.has(mid)) roleMap.set(mid, 'MEMBER');
+      });
+    });
+  } catch (_) {}
 
   // Fetch all user records from DB
   const users = await User.find({ _id: { $in: Array.from(userIds) } })

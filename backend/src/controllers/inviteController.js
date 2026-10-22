@@ -27,6 +27,28 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
+// Helper to dynamically resolve client frontend URL from request body, headers (Origin / X-Forwarded-Host), or env fallback
+const resolveFrontendUrl = (req) => {
+  if (req.body && typeof req.body.frontendUrl === 'string' && req.body.frontendUrl.startsWith('http')) {
+    return req.body.frontendUrl.replace(/\/+$/, '');
+  }
+  if (req.headers.origin && typeof req.headers.origin === 'string' && req.headers.origin.startsWith('http')) {
+    return req.headers.origin.replace(/\/+$/, '');
+  }
+  const xForwardedHost = req.headers['x-forwarded-host'];
+  if (xForwardedHost) {
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    return `${proto}://${xForwardedHost}`.replace(/\/+$/, '');
+  }
+  if (req.headers.referer) {
+    try {
+      const url = new URL(req.headers.referer);
+      return url.origin;
+    } catch (_) {}
+  }
+  return (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+};
+
 // @desc    Send an Invitation to a Project and/or Workspace
 // @route   POST /api/v1/invites
 // @access  Private
@@ -157,7 +179,7 @@ const createInvitation = asyncHandler(async (req, res) => {
     });
   }
 
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const frontendUrl = resolveFrontendUrl(req);
   const inviteLink = `${frontendUrl}/invite/${token}`;
 
   // Send email async
@@ -561,7 +583,7 @@ const createBulkInvitations = asyncHandler(async (req, res) => {
     });
   }
 
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const frontendUrl = resolveFrontendUrl(req);
   const cleanEmails = Array.from(
     new Set(
       invites
@@ -766,7 +788,7 @@ const resendInvitation = asyncHandler(async (req, res) => {
   invite.status = 'PENDING';
   await invite.save();
 
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const frontendUrl = resolveFrontendUrl(req);
   const inviteLink = `${frontendUrl}/invite/${invite.token}`;
 
   const targetEmails = invite.isBatch ? invite.allowedEmails : [invite.email];

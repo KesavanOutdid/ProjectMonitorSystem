@@ -1,0 +1,13 @@
+{
+  "name": "project-monitor-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Outdid Sync - Jira-grade Project & Workflow Management Engine",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install --legacy-peer-deps",
+    "seed": "npm --prefix backend run seed"
+  }
+}

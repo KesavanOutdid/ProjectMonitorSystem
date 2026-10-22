@@ -165,9 +165,21 @@ export const AdminPanel: React.FC = () => {
   });
 
   const handleCopyLink = (tokenOrUrl: string) => {
-    const inviteUrl = tokenOrUrl.startsWith('http')
-      ? tokenOrUrl
-      : `${window.location.origin}/invite/${tokenOrUrl}`;
+    let inviteUrl = '';
+    if (typeof window !== 'undefined') {
+      if (!tokenOrUrl.startsWith('http')) {
+        inviteUrl = `${window.location.origin}/invite/${tokenOrUrl}`;
+      } else {
+        try {
+          const url = new URL(tokenOrUrl);
+          inviteUrl = `${window.location.origin}${url.pathname}${url.search}`;
+        } catch (_) {
+          inviteUrl = tokenOrUrl;
+        }
+      }
+    } else {
+      inviteUrl = tokenOrUrl;
+    }
     navigator.clipboard.writeText(inviteUrl);
     setCopiedToken(tokenOrUrl);
     setTimeout(() => setCopiedToken(null), 2500);

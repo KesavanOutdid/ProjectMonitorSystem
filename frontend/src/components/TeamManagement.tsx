@@ -176,7 +176,12 @@ export const TeamManagement: React.FC = () => {
       return res.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-teams', currentWorkspace?._id] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['project-teams-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
       setIsCreateModalOpen(false);
       resetForm();
     }
@@ -193,7 +198,12 @@ export const TeamManagement: React.FC = () => {
       return res.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-teams', currentWorkspace?._id] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['project-teams-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
       setEditingTeam(null);
       resetForm();
     }
@@ -205,7 +215,12 @@ export const TeamManagement: React.FC = () => {
       return res.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-teams', currentWorkspace?._id] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['project-teams-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
       setDeleteConfirmTeam(null);
     }
   });
@@ -216,7 +231,12 @@ export const TeamManagement: React.FC = () => {
       return res.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-teams', currentWorkspace?._id] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['project-teams-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
       if (manageMembersTeam && data?.data) {
         setManageMembersTeam(data.data);
       }
@@ -229,7 +249,12 @@ export const TeamManagement: React.FC = () => {
       return res.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['workspace-teams', currentWorkspace?._id] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['project-teams-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
       if (manageMembersTeam && data?.data) {
         setManageMembersTeam(data.data);
       }

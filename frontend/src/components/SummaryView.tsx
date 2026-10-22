@@ -266,12 +266,35 @@ export const SummaryView: React.FC<SummaryViewProps> = ({
       }
     });
 
-    const filtered = allMembers.filter((m: any) => {
+    const memberMap = new Map<string, any>();
+
+    // 1. Include matching members from project members
+    allMembers.forEach((m: any) => {
       const uid = (m.userId?._id || m.userId || m._id)?.toString();
-      return uid && teamMemberIdSet.has(uid);
+      if (uid && teamMemberIdSet.has(uid)) {
+        memberMap.set(uid, m);
+      }
     });
 
-    return filtered;
+    // 2. Include members directly populated on the team object
+    if (teamObj) {
+      if (teamObj.leadId && typeof teamObj.leadId === 'object') {
+        const lid = (teamObj.leadId._id || teamObj.leadId).toString();
+        if (lid && !memberMap.has(lid)) {
+          memberMap.set(lid, { userId: teamObj.leadId, role: 'TEAM_LEAD' });
+        }
+      }
+      (teamObj.members || []).forEach((m: any) => {
+        if (typeof m === 'object' && m !== null) {
+          const mid = (m._id || m.userId?._id || m.userId)?.toString();
+          if (mid && !memberMap.has(mid)) {
+            memberMap.set(mid, m.userId ? m : { userId: m, role: 'MEMBER' });
+          }
+        }
+      });
+    }
+
+    return Array.from(memberMap.values());
   }, [projectData?.members, selectedTeam, projectTeams, effectiveTasks]);
 
   // Handle team change: update team and ensure member is valid

@@ -1520,11 +1520,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                           </div>
 
                           {/* Member Assignee Selector */}
-                          {sub.microtasks && sub.microtasks.length > 0 ? (
-                            <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md" title="Assigned at Microtask level">
-                              Microtask Assigned
-                            </span>
-                          ) : canManageSubtasks ? (
+                          {canManageSubtasks ? (
                             <select
                               value={subAssignee?._id || subAssignee || ''}
                               onChange={(e) =>
@@ -1534,6 +1530,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                 })
                               }
                               className="text-[11px] font-medium bg-white border border-gray-200 rounded-lg px-2 py-1 outline-none text-gray-700 hover:border-gray-300 cursor-pointer shadow-2xs max-w-[120px] truncate"
+                              title="Subtask Assignee"
                             >
                               <option value="">Unassigned</option>
                               {assignableMembers.map((m: any) => {
@@ -1808,11 +1805,37 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                   </div>
 
                                   <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
-                                    {mic.assigneeId?.name && (
-                                      <span className="text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                        <User className="w-2.5 h-2.5 text-gray-400" />
-                                        {mic.assigneeId.name}
-                                      </span>
+                                    {canToggleThisSubtask ? (
+                                      <select
+                                        value={(typeof mic.assigneeId === 'object' ? mic.assigneeId?._id : mic.assigneeId) || ''}
+                                        onChange={(e) =>
+                                          toggleMicrotaskMutation.mutate({
+                                            subtaskId: sub._id,
+                                            microtaskId: mic._id,
+                                            assigneeId: e.target.value || null
+                                          })
+                                        }
+                                        className="text-[10px] font-medium bg-white border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 text-gray-700 outline-none cursor-pointer max-w-[110px] truncate shadow-2xs"
+                                        title="Change Microtask Assignee"
+                                      >
+                                        <option value="">Unassigned</option>
+                                        {assignableMembers.map((m: any) => {
+                                          const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                          const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                          return (
+                                            <option key={mId} value={mId}>
+                                              {mName}
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    ) : (
+                                      mic.assigneeId?.name && (
+                                        <span className="text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                          <User className="w-2.5 h-2.5 text-gray-400" />
+                                          {mic.assigneeId.name}
+                                        </span>
+                                      )
                                     )}
                                     {canToggleThisSubtask && (
                                       <button
@@ -2124,12 +2147,40 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
-                                    {mic.assigneeName && (
-                                      <span className="text-gray-600 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                        <User className="w-2.5 h-2.5 text-gray-400" />
-                                        {mic.assigneeName}
-                                      </span>
-                                    )}
+                                    <select
+                                      value={mic.assigneeId || ''}
+                                      onChange={(e) => {
+                                        const updatedSubtasks = [...draftSubtasks];
+                                        const targetMicros = [...(updatedSubtasks[idx].microtasks || [])];
+                                        const selectedM = assignableMembers.find((m: any) => {
+                                          const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                          return mId === e.target.value;
+                                        });
+                                        const selectedName = selectedM
+                                          ? (typeof selectedM.userId === 'object' ? selectedM.userId?.name : selectedM.name) || selectedM.email
+                                          : undefined;
+                                        targetMicros[micIdx] = {
+                                          ...targetMicros[micIdx],
+                                          assigneeId: e.target.value || undefined,
+                                          assigneeName: selectedName
+                                        };
+                                        updatedSubtasks[idx] = { ...updatedSubtasks[idx], microtasks: targetMicros };
+                                        setDraftSubtasks(updatedSubtasks);
+                                      }}
+                                      className="text-[10px] bg-white border border-gray-200 hover:border-gray-300 rounded px-1.5 py-0.5 text-gray-700 outline-none cursor-pointer max-w-[100px] truncate shadow-2xs"
+                                      title="Draft Microtask Assignee"
+                                    >
+                                      <option value="">Unassigned</option>
+                                      {assignableMembers.map((m: any) => {
+                                        const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                        const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                        return (
+                                          <option key={mId} value={mId}>
+                                            {mName}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
                                     <button
                                       type="button"
                                       onClick={() => {

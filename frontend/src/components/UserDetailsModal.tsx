@@ -86,6 +86,10 @@ export const UserDetailsModal: React.FC<UserDetailsModalProps> = ({
       refetch();
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
     }
   });
 
@@ -99,6 +103,10 @@ export const UserDetailsModal: React.FC<UserDetailsModalProps> = ({
       refetch();
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['project-members'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
     }
   });
 
