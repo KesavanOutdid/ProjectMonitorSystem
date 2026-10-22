@@ -115,6 +115,8 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any | null>(null);
+  const [targetSubtaskId, setTargetSubtaskId] = useState<string | null>(null);
+  const [targetMicrotaskId, setTargetMicrotaskId] = useState<string | null>(null);
   const [initialTaskStatus, setInitialTaskStatus] = useState<string>('TODO');
   const [initialTaskTeam, setInitialTaskTeam] = useState<string>('');
   const [initialTaskSprintId, setInitialTaskSprintId] = useState<string>('');
@@ -399,8 +401,13 @@ export default function DashboardPage() {
     setIsTaskModalOpen(true);
   };
 
-  const handleSelectTask = (task: any) => {
+  const handleSelectTask = (
+    task: any,
+    context?: { targetSubtaskId?: string; targetMicrotaskId?: string }
+  ) => {
     setSelectedTask(task);
+    setTargetSubtaskId(context?.targetSubtaskId || null);
+    setTargetMicrotaskId(context?.targetMicrotaskId || null);
     setIsTaskModalOpen(true);
   };
 
@@ -651,11 +658,17 @@ export default function DashboardPage() {
       {isTaskModalOpen && (
         <TaskModal
           isOpen={isTaskModalOpen}
-          onClose={() => setIsTaskModalOpen(false)}
+          onClose={() => {
+            setIsTaskModalOpen(false);
+            setTargetSubtaskId(null);
+            setTargetMicrotaskId(null);
+          }}
           task={selectedTask}
           initialStatus={initialTaskStatus}
           initialTeam={initialTaskTeam}
           initialSprintId={initialTaskSprintId}
+          initialTargetSubtaskId={targetSubtaskId || undefined}
+          initialTargetMicrotaskId={targetMicrotaskId || undefined}
           projectId={currentProject?._id || (projects && projects[0]?._id) || ''}
         />
       )}

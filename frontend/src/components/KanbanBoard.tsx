@@ -49,7 +49,8 @@ import {
   CornerDownRight,
   FileSpreadsheet,
   Download,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { downloadProjectExcel } from '../lib/excelExport';
 
@@ -87,7 +88,7 @@ interface Task {
 
 interface KanbanBoardProps {
   projectId: string;
-  onSelectTask: (task: Task) => void;
+  onSelectTask: (task: Task, context?: { targetSubtaskId?: string; targetMicrotaskId?: string }) => void;
   onOpenCreateTask: (initialStatus?: string, initialTeam?: string, initialSprintId?: string) => void;
   searchQuery?: string;
 }
@@ -150,7 +151,12 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [editSprintEndDate, setEditSprintEndDate] = useState('');
   const [editSprintReason, setEditSprintReason] = useState('');
   const [nextSprintIdForIncomplete, setNextSprintIdForIncomplete] = useState('');
-  const [localSearch, setLocalSearch] = useState('');
+  const [localSearch, setLocalSearch] = useState(searchQuery || '');
+  useEffect(() => {
+    if (searchQuery !== undefined) {
+      setLocalSearch(searchQuery);
+    }
+  }, [searchQuery]);
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string | null>(null);
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('');
   const [isAddTeamModalOpen, setIsAddTeamModalOpen] = useState(false);
@@ -1236,10 +1242,20 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             <input
               type="text"
               placeholder="Search board..."
-              value={localSearch || searchQuery}
+              value={localSearch}
               onChange={(e) => setLocalSearch(e.target.value)}
-              className="pl-8 pr-3 py-1.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 w-36 sm:w-48 font-medium transition-all"
+              className="pl-8 pr-7 py-1.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 w-36 sm:w-56 font-medium transition-all"
             />
+            {localSearch && (
+              <button
+                type="button"
+                onClick={() => setLocalSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
 
           {/* Member Avatar Filter */}
@@ -1735,32 +1751,89 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               }
             });
 
-            // 4. Search query filter
+            // 4. Search query filter (Multi-term, case-insensitive substring matching across main tasks, subtasks & microtasks)
             const query = (localSearch || searchQuery).trim().toLowerCase();
             if (query) {
-              colMainTasks = colMainTasks.filter(
-                (t) =>
-                  t.title.toLowerCase().includes(query) ||
-                  t.key.toLowerCase().includes(query) ||
-                  t.assigneeId?.name?.toLowerCase().includes(query) ||
-                  t.labels?.some((l) => l.toLowerCase().includes(query))
-              );
-              colSubtasks = colSubtasks.filter(
-                ({ parent, subtask }) =>
-                  subtask.title.toLowerCase().includes(query) ||
-                  (subtask.key && subtask.key.toLowerCase().includes(query)) ||
-                  parent.key.toLowerCase().includes(query) ||
-                  parent.title.toLowerCase().includes(query) ||
-                  subtask.assigneeId?.name?.toLowerCase().includes(query)
-              );
-              colMicrotasks = colMicrotasks.filter(
-                ({ parent, subtask, microtask }) =>
-                  microtask.title.toLowerCase().includes(query) ||
-                  (microtask.key && microtask.key.toLowerCase().includes(query)) ||
-                  subtask.title.toLowerCase().includes(query) ||
-                  parent.title.toLowerCase().includes(query) ||
-                  microtask.assigneeId?.name?.toLowerCase().includes(query)
-              );
+              const queryTerms = query.split(/\s+/).filter(Boolean);
+
+              colMainTasks = colMainTasks.filter((t) => {
+                const searchBlob = [
+                  t.title || '',
+                  t.key || '',
+                  t.description || '',
+                  (t as any).team || '',
+                  t.priority || '',
+                  t.status || '',
+                  t.assigneeId?.name || '',
+                  t.assigneeId?.email || '',
+                  ...(t.labels || []),
+                  ...(t.subtasks || []).flatMap((st: any) => [
+                    st.title || '',
+                    st.key || '',
+                    st.description || '',
+                    st.status || '',
+                    st.assigneeId?.name || '',
+                    st.assigneeId?.email || '',
+                    ...(st.microtasks || []).flatMap((m: any) => [
+                      m.title || '',
+                      m.key || '',
+                      m.description || '',
+                      m.status || '',
+                      m.assigneeId?.name || '',
+                      m.assigneeId?.email || ''
+                    ])
+                  ])
+                ].join(' ').toLowerCase();
+
+                return queryTerms.every((term) => searchBlob.includes(term));
+              });
+
+              colSubtasks = colSubtasks.filter(({ parent, subtask }) => {
+                const searchBlob = [
+                  subtask.title || '',
+                  subtask.key || '',
+                  subtask.description || '',
+                  subtask.status || '',
+                  subtask.assigneeId?.name || '',
+                  subtask.assigneeId?.email || '',
+                  parent.title || '',
+                  parent.key || '',
+                  parent.description || '',
+                  (parent as any).team || '',
+                  ...(parent.labels || []),
+                  ...(subtask.microtasks || []).flatMap((m: any) => [
+                    m.title || '',
+                    m.key || '',
+                    m.description || '',
+                    m.status || '',
+                    m.assigneeId?.name || '',
+                    m.assigneeId?.email || ''
+                  ])
+                ].join(' ').toLowerCase();
+
+                return queryTerms.every((term) => searchBlob.includes(term));
+              });
+
+              colMicrotasks = colMicrotasks.filter(({ parent, subtask, microtask }) => {
+                const searchBlob = [
+                  microtask.title || '',
+                  microtask.key || '',
+                  microtask.description || '',
+                  microtask.status || '',
+                  microtask.assigneeId?.name || '',
+                  microtask.assigneeId?.email || '',
+                  subtask.title || '',
+                  subtask.key || '',
+                  subtask.description || '',
+                  parent.title || '',
+                  parent.key || '',
+                  parent.description || '',
+                  (parent as any).team || '',
+                  ...(parent.labels || [])
+                ].join(' ').toLowerCase();
+
+                return queryTerms.every((term) => searchBlob.includes(term));
+              });
             }
 
             // 5. Assignee filter
@@ -2129,7 +2202,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         key={`${parent._id}-${st._id}`}
                         draggable={canDrag}
                         onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id) : e.preventDefault()}
-                        onClick={() => onSelectTask(parent)}
+                        onClick={() => onSelectTask(parent, { targetSubtaskId: st._id })}
                         className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-l-indigo-600 border-t border-r border-b border-[#DFE1E6] hover:border-indigo-400 shadow-2xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 ${
                           canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                         } group flex flex-col gap-2 relative text-slate-800`}
@@ -2237,7 +2310,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         key={`${parent._id}-${st._id}-${mic._id}`}
                         draggable={canDrag}
                         onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mic._id) : e.preventDefault()}
-                        onClick={() => onSelectTask(parent)}
+                        onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMicrotaskId: mic._id })}
                         className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-l-purple-600 border-t border-r border-b border-[#DFE1E6] hover:border-purple-400 shadow-2xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 ${
                           canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                         } group flex flex-col gap-2 relative text-slate-800`}

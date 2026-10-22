@@ -56,6 +56,8 @@ interface TaskModalProps {
   initialTeam?: string;
   initialSprintId?: string;
   projectId: string;
+  initialTargetSubtaskId?: string;
+  initialTargetMicrotaskId?: string;
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
@@ -65,7 +67,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   initialStatus = '',
   initialTeam = '',
   initialSprintId = '',
-  projectId
+  projectId,
+  initialTargetSubtaskId,
+  initialTargetMicrotaskId
 }) => {
   const queryClient = useQueryClient();
   const { user, projects, currentProject } = useAuthStore();
@@ -140,6 +144,71 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [newMicrotaskTitles, setNewMicrotaskTitles] = useState<Record<string, string>>({});
   const [newMicrotaskAssignees, setNewMicrotaskAssignees] = useState<Record<string, string>>({});
   const [isMicrotasksOpen, setIsMicrotasksOpen] = useState<Record<string, boolean>>({});
+
+  // Auto-scroll & blink highlight state for targeted subtasks & microtasks
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setHighlightedItemId(null);
+      return;
+    }
+
+    const currentSubtasks = task?.subtasks || [];
+
+    if (initialTargetMicrotaskId) {
+      // Auto-expand the parent subtask container
+      const parentSub = currentSubtasks.find((s: any) =>
+        (s.microtasks || []).some(
+          (m: any) => m._id === initialTargetMicrotaskId || m.key === initialTargetMicrotaskId
+        )
+      );
+      if (parentSub) {
+        setIsMicrotasksOpen((prev) => ({ ...prev, [parentSub._id]: true }));
+      }
+      setHighlightedItemId(initialTargetMicrotaskId);
+
+      // Smooth scroll into viewport center with small delay for mount/expansion
+      const scrollTimer = setTimeout(() => {
+        const el =
+          document.getElementById(`microtask-${initialTargetMicrotaskId}`) ||
+          document.querySelector(`[data-microtask-key="${initialTargetMicrotaskId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 300);
+
+      // Flash/blink highlight persists for 4 seconds then gracefully returns to normal
+      const clearTimer = setTimeout(() => {
+        setHighlightedItemId(null);
+      }, 4000);
+
+      return () => {
+        clearTimeout(scrollTimer);
+        clearTimeout(clearTimer);
+      };
+    } else if (initialTargetSubtaskId) {
+      setHighlightedItemId(initialTargetSubtaskId);
+
+      const scrollTimer = setTimeout(() => {
+        const el =
+          document.getElementById(`subtask-${initialTargetSubtaskId}`) ||
+          document.querySelector(`[data-subtask-key="${initialTargetSubtaskId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 300);
+
+      const clearTimer = setTimeout(() => {
+        setHighlightedItemId(null);
+      }, 4000);
+
+      return () => {
+        clearTimeout(scrollTimer);
+        clearTimeout(clearTimer);
+      };
+    }
+  }, [isOpen, initialTargetSubtaskId, initialTargetMicrotaskId, task?._id]);
 
   // Worklog modal state
   const [isLogWorkOpen, setIsLogWorkOpen] = useState(false);
@@ -1328,11 +1397,20 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   const isSubAssignee = subAssignee && (subAssignee._id || subAssignee).toString() === currentUserIdStr;
                   const canToggleThisSubtask = canEditFullFields || isTaskAssignee || isSubAssignee;
                   const isExpanded = expandedSubtaskId === sub._id;
+                  const isHighlighted =
+                    highlightedItemId === sub._id ||
+                    (sub.key && highlightedItemId === sub.key);
 
                   return (
                     <div
                       key={sub._id}
-                      className="rounded-xl bg-white border border-gray-200/90 shadow-2xs transition-all overflow-hidden group"
+                      id={`subtask-${sub._id}`}
+                      data-subtask-key={sub.key}
+                      className={`rounded-xl bg-white border shadow-2xs transition-all overflow-hidden group ${
+                        isHighlighted
+                          ? 'ring-4 ring-indigo-500/90 border-indigo-500 bg-indigo-50/50 shadow-lg animate-pulse'
+                          : 'border-gray-200/90'
+                      }`}
                     >
                       {/* Subtask Header Row */}
                       <div className="flex items-center justify-between p-2.5 bg-gray-50/70 hover:bg-gray-100/60 transition-colors gap-2 flex-wrap">
@@ -1771,10 +1849,20 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                           <div className="space-y-1.5 mb-2 pl-2 border-l-2 border-blue-100">
                             {(sub.microtasks || []).map((mic: any) => {
                               const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                              const isMicHighlighted =
+                                highlightedItemId === mic._id ||
+                                (mic.key && highlightedItemId === mic.key);
+
                               return (
                                 <div
                                   key={mic._id}
-                                  className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-white border border-gray-200/80 hover:border-blue-200 text-xs shadow-2xs group/mic"
+                                  id={`microtask-${mic._id}`}
+                                  data-microtask-key={mic.key}
+                                  className={`flex items-center justify-between gap-2 p-1.5 rounded-lg border text-xs shadow-2xs group/mic transition-all ${
+                                    isMicHighlighted
+                                      ? 'ring-4 ring-purple-600/95 border-purple-500 bg-purple-100 shadow-md animate-pulse'
+                                      : 'bg-white border-gray-200/80 hover:border-blue-200'
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2 flex-1 min-w-0">
                                     <input
