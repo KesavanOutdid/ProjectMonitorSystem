@@ -58,6 +58,7 @@ interface TaskModalProps {
   projectId: string;
   initialTargetSubtaskId?: string;
   initialTargetMicrotaskId?: string;
+  initialTargetMinitaskId?: string;
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
@@ -69,7 +70,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   initialSprintId = '',
   projectId,
   initialTargetSubtaskId,
-  initialTargetMicrotaskId
+  initialTargetMicrotaskId,
+  initialTargetMinitaskId
 }) => {
   const queryClient = useQueryClient();
   const { user, projects, currentProject } = useAuthStore();
@@ -145,7 +147,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [newMicrotaskAssignees, setNewMicrotaskAssignees] = useState<Record<string, string>>({});
   const [isMicrotasksOpen, setIsMicrotasksOpen] = useState<Record<string, boolean>>({});
 
-  // Auto-scroll & blink highlight state for targeted subtasks & microtasks
+  // Mini-tasks state
+  const [newMinitaskTitles, setNewMinitaskTitles] = useState<Record<string, string>>({});
+  const [newMinitaskAssignees, setNewMinitaskAssignees] = useState<Record<string, string>>({});
+  const [isMinitasksOpen, setIsMinitasksOpen] = useState<Record<string, boolean>>({});
+
+  // Auto-scroll & blink highlight state for targeted subtasks, microtasks & mini-tasks
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -157,18 +164,32 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     const currentSubtasks = task?.subtasks || [];
 
     if (initialTargetMicrotaskId) {
-      // Auto-expand the parent subtask container
-      const parentSub = currentSubtasks.find((s: any) =>
-        (s.microtasks || []).some(
-          (m: any) => m._id === initialTargetMicrotaskId || m.key === initialTargetMicrotaskId
-        )
-      );
-      if (parentSub) {
-        setIsMicrotasksOpen((prev) => ({ ...prev, [parentSub._id]: true }));
+      // Auto-expand parent subtask and parent minitask
+      let parentSubId: string | null = null;
+      let parentMiniId: string | null = null;
+      for (const s of currentSubtasks) {
+        for (const m of (s.minitasks || [])) {
+          if (
+            (m.microtasks || []).some(
+              (mic: any) => mic._id === initialTargetMicrotaskId || mic.key === initialTargetMicrotaskId
+            )
+          ) {
+            parentSubId = s._id;
+            parentMiniId = m._id;
+            break;
+          }
+        }
+        if (parentSubId) break;
+      }
+
+      if (parentSubId) {
+        setIsMinitasksOpen((prev) => ({ ...prev, [parentSubId!]: true }));
+      }
+      if (parentMiniId) {
+        setIsMicrotasksOpen((prev) => ({ ...prev, [parentMiniId!]: true }));
       }
       setHighlightedItemId(initialTargetMicrotaskId);
 
-      // Smooth scroll into viewport center with small delay for mount/expansion
       const scrollTimer = setTimeout(() => {
         const el =
           document.getElementById(`microtask-${initialTargetMicrotaskId}`) ||
@@ -176,9 +197,37 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
+      }, 350);
+
+      const clearTimer = setTimeout(() => {
+        setHighlightedItemId(null);
+      }, 4000);
+
+      return () => {
+        clearTimeout(scrollTimer);
+        clearTimeout(clearTimer);
+      };
+    } else if (initialTargetMinitaskId) {
+      // Auto-expand parent subtask
+      const parentSub = currentSubtasks.find((s: any) =>
+        (s.minitasks || []).some(
+          (m: any) => m._id === initialTargetMinitaskId || m.key === initialTargetMinitaskId
+        )
+      );
+      if (parentSub) {
+        setIsMinitasksOpen((prev) => ({ ...prev, [parentSub._id]: true }));
+      }
+      setHighlightedItemId(initialTargetMinitaskId);
+
+      const scrollTimer = setTimeout(() => {
+        const el =
+          document.getElementById(`minitask-${initialTargetMinitaskId}`) ||
+          document.querySelector(`[data-minitask-key="${initialTargetMinitaskId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }, 300);
 
-      // Flash/blink highlight persists for 4 seconds then gracefully returns to normal
       const clearTimer = setTimeout(() => {
         setHighlightedItemId(null);
       }, 4000);
@@ -208,7 +257,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         clearTimeout(clearTimer);
       };
     }
-  }, [isOpen, initialTargetSubtaskId, initialTargetMicrotaskId, task?._id]);
+  }, [isOpen, initialTargetSubtaskId, initialTargetMicrotaskId, initialTargetMinitaskId, task?._id]);
 
   // Worklog modal state
   const [isLogWorkOpen, setIsLogWorkOpen] = useState(false);
@@ -587,6 +636,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const isTaskAssignee = (activeTask?.assigneeId?._id || activeTask?.assigneeId)?.toString() === currentUserIdStr;
   const isTaskReporter = (activeTask?.reporterId?._id || activeTask?.reporterId)?.toString() === currentUserIdStr;
   const isLevel4 = !isLevel1 && !isLevel2 && !isLevel3 && !isGuest;
+  const isMember = user?.role === 'MEMBER' || isLevel4;
 
   const isTeamLeadAllowed = isLevel3 && (
     isEditing
@@ -601,10 +651,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       : hasLeadTeams // When creating, Team Lead is only allowed if they actually lead a team
   );
 
-  const canEditFullFields = !isGuest && (isLevel1 || isLevel2 || isTeamLeadAllowed);
+  const isTaskLocked = Boolean(activeTask?.isLocked);
+  const lockedByIdStr = (activeTask?.lockedBy?._id || activeTask?.lockedBy)?.toString();
+  const isLockedByMe = Boolean(lockedByIdStr && currentUserIdStr && lockedByIdStr === currentUserIdStr);
+  const canUnlock = isLevel1 || isLockedByMe;
+  const canLock = !isGuest && (isLevel1 || isLevel2 || isTeamLeadAllowed);
+
+  const canEditFullFields = !isGuest && !isMember && (isLevel1 || isLevel2 || isTeamLeadAllowed);
+  const canAssignOthers = canEditFullFields;
   const canChangeStatus = !isGuest && (canEditFullFields || (isLevel4 && isTaskAssignee));
   const canComment = !isGuest && (canEditFullFields || (isLevel4 && isTaskAssignee));
-  const canDeleteTask = !isGuest && (isLevel1 || isLevel2 || isTeamLeadAllowed || isTaskReporter);
+  const canDeleteTask = !isTaskLocked && !isGuest && (isLevel1 || isLevel2 || isTeamLeadAllowed || isTaskReporter);
   const canManageSubtasks = !isGuest && (canEditFullFields || isTaskAssignee);
   const canSave = isEditing ? canChangeStatus : (canEditFullFields && (!isLevel3 || isLevel1 || isLevel2 || hasLeadTeams));
 
@@ -626,7 +683,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       onClose();
     },
     onError: (err: any) => {
-      setFormError(err?.response?.data?.error || 'Failed to create issue. Please check fields.');
+      setFormError(err?.response?.data?.error || 'Failed to create task. Please check fields.');
     }
   });
 
@@ -650,7 +707,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       onClose();
     },
     onError: (err: any) => {
-      setFormError(err?.response?.data?.error || 'Failed to update issue. Please check fields.');
+      setFormError(err?.response?.data?.error || 'Failed to update task. Please check fields.');
     }
   });
 
@@ -776,11 +833,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     onSuccess: () => {
       refetchTask();
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || 'Failed to delete subtask');
     }
   });
 
-  // Microtask Mutations
-  const addMicrotaskMutation = useMutation({
+  // Mini-task Mutations
+  const addMinitaskMutation = useMutation({
     mutationFn: async ({
       subtaskId,
       title,
@@ -798,7 +858,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       status?: string;
       assigneeId?: string;
     }) => {
-      const res = await api.post(`/tasks/${activeTask._id}/subtasks/${subtaskId}/microtasks`, {
+      const res = await api.post(`/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks`, {
         title,
         description: description || undefined,
         startDate: startDate || undefined,
@@ -809,8 +869,124 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       return res.data;
     },
     onSuccess: (data, variables) => {
-      setNewMicrotaskTitles((prev) => ({ ...prev, [variables.subtaskId]: '' }));
-      setNewMicrotaskAssignees((prev) => ({ ...prev, [variables.subtaskId]: '' }));
+      setNewMinitaskTitles((prev) => ({ ...prev, [variables.subtaskId]: '' }));
+      setNewMinitaskAssignees((prev) => ({ ...prev, [variables.subtaskId]: '' }));
+      if (data?.taskStatus || data?.data?.taskStatus) {
+        setStatus(data.taskStatus || data.data.taskStatus);
+      }
+      refetchTask();
+      refetchActivities();
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    }
+  });
+
+  const toggleMinitaskMutation = useMutation({
+    mutationFn: async ({
+      subtaskId,
+      minitaskId,
+      title,
+      description,
+      startDate,
+      dueDate,
+      status,
+      isCompleted,
+      assigneeId
+    }: {
+      subtaskId: string;
+      minitaskId: string;
+      title?: string;
+      description?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+      status?: string;
+      isCompleted?: boolean;
+      assigneeId?: string | null;
+    }) => {
+      const payload: any = {};
+      if (title !== undefined) payload.title = title;
+      if (description !== undefined) payload.description = description;
+      if (startDate !== undefined) payload.startDate = startDate;
+      if (dueDate !== undefined) payload.dueDate = dueDate;
+      if (status !== undefined) payload.status = status;
+      if (isCompleted !== undefined) payload.isCompleted = isCompleted;
+      if (assigneeId !== undefined) payload.assigneeId = assigneeId || null;
+      const res = await api.patch(
+        `/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks/${minitaskId}`,
+        payload
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data?.taskStatus || data?.data?.taskStatus) {
+        setStatus(data.taskStatus || data.data.taskStatus);
+      }
+      refetchTask();
+      refetchActivities();
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    }
+  });
+
+  const deleteMinitaskMutation = useMutation({
+    mutationFn: async ({
+      subtaskId,
+      minitaskId
+    }: {
+      subtaskId: string;
+      minitaskId: string;
+    }) => {
+      const res = await api.delete(
+        `/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks/${minitaskId}`
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data?.taskStatus || data?.data?.taskStatus) {
+        setStatus(data.taskStatus || data.data.taskStatus);
+      }
+      refetchTask();
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || 'Failed to delete mini-task');
+    }
+  });
+
+  const addMicrotaskMutation = useMutation({
+    mutationFn: async ({
+      subtaskId,
+      minitaskId,
+      title,
+      description,
+      startDate,
+      dueDate,
+      status,
+      assigneeId
+    }: {
+      subtaskId: string;
+      minitaskId: string;
+      title: string;
+      description?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+      status?: string;
+      assigneeId?: string | null;
+    }) => {
+      const res = await api.post(
+        `/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks/${minitaskId}/microtasks`,
+        {
+          title,
+          description: description || undefined,
+          startDate: startDate || undefined,
+          dueDate: dueDate || undefined,
+          status: status || undefined,
+          assigneeId: assigneeId || undefined
+        }
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      setNewMicrotaskTitles((prev) => ({ ...prev, [variables.minitaskId]: '' }));
+      setNewMicrotaskAssignees((prev) => ({ ...prev, [variables.minitaskId]: '' }));
       if (data?.taskStatus || data?.data?.taskStatus) {
         setStatus(data.taskStatus || data.data.taskStatus);
       }
@@ -823,6 +999,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const toggleMicrotaskMutation = useMutation({
     mutationFn: async ({
       subtaskId,
+      minitaskId,
       microtaskId,
       title,
       description,
@@ -833,6 +1010,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       assigneeId
     }: {
       subtaskId: string;
+      minitaskId: string;
       microtaskId: string;
       title?: string;
       description?: string;
@@ -850,7 +1028,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       if (status !== undefined) payload.status = status;
       if (isCompleted !== undefined) payload.isCompleted = isCompleted;
       if (assigneeId !== undefined) payload.assigneeId = assigneeId || null;
-      const res = await api.patch(`/tasks/${activeTask._id}/subtasks/${subtaskId}/microtasks/${microtaskId}`, payload);
+      const res = await api.patch(
+        `/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks/${minitaskId}/microtasks/${microtaskId}`,
+        payload
+      );
       return res.data;
     },
     onSuccess: (data) => {
@@ -864,8 +1045,18 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   });
 
   const deleteMicrotaskMutation = useMutation({
-    mutationFn: async ({ subtaskId, microtaskId }: { subtaskId: string; microtaskId: string }) => {
-      const res = await api.delete(`/tasks/${activeTask._id}/subtasks/${subtaskId}/microtasks/${microtaskId}`);
+    mutationFn: async ({
+      subtaskId,
+      minitaskId,
+      microtaskId
+    }: {
+      subtaskId: string;
+      minitaskId: string;
+      microtaskId: string;
+    }) => {
+      const res = await api.delete(
+        `/tasks/${activeTask._id}/subtasks/${subtaskId}/minitasks/${minitaskId}/microtasks/${microtaskId}`
+      );
       return res.data;
     },
     onSuccess: (data) => {
@@ -874,6 +1065,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       }
       refetchTask();
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || 'Failed to delete micro-task');
     }
   });
 
@@ -928,6 +1122,26 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     onSuccess: () => {
       refetchTask();
       refetchActivities();
+    }
+  });
+
+  // Toggle Task / Subtask / Mini / Micro Lock Mutation (Prevents deletion, only locker or admin can unlock)
+  const toggleLockMutation = useMutation({
+    mutationFn: async (payload?: { subtaskId?: string; minitaskId?: string; microtaskId?: string }) => {
+      const res = await api.post(`/tasks/${activeTask._id}/lock`, payload || {});
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      refetchTask();
+      refetchActivities();
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['infinite-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['for-you-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['project-all-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['project-sprints'] });
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || 'Failed to toggle lock');
     }
   });
 
@@ -1045,12 +1259,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     setFormError(null);
 
     if (!activeProjectId) {
-      setFormError('Please select a project before creating an issue.');
+      setFormError('Please select a project before creating a task.');
       return;
     }
 
     if (!title.trim()) {
-      setFormError('Please enter an issue summary/title.');
+      setFormError('Please enter a task summary/title.');
       return;
     }
 
@@ -1176,17 +1390,66 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       >
         {/* Top Header Bar */}
         <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between bg-[#F3F4F6]/80 select-none">
-          {/* Left: Task Key Badge */}
-          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+          {/* Left: Task Key Badge & Current Active User Session */}
+          <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 flex-wrap">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-gray-200 font-mono font-bold text-[#111827] shadow-2xs">
               {getTypeIcon(issueType)}
               <span>{isEditing ? activeTask.key : `NEW MAIN TASK • ${currentProject?.key || 'TASK'}-MT`}</span>
+            </div>
+
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-gray-200 text-xs shadow-2xs font-medium" title="Current Active Session">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span className="text-[#111827] font-bold">{user?.name || 'User'}</span>
+              <span className="text-[10px] font-semibold text-slate-500 uppercase px-1.5 py-0.2 bg-slate-100 rounded border border-slate-200">
+                {user?.role ? user.role.replace(/_/g, ' ') : 'MEMBER'}
+              </span>
             </div>
           </div>
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1 sm:gap-2">
-            {/* Lock / Issue Security Restriction Toggle */}
+            {/* Task Lock (Deletion Protection) Toggle - "who locked that person only can remove that lock" */}
+            {isEditing && (
+              <button
+                type="button"
+                disabled={toggleLockMutation.isPending || (isTaskLocked && !canUnlock)}
+                onClick={() => {
+                  if (isTaskLocked && !canUnlock) {
+                    alert(`Only ${activeTask?.lockedBy?.name || 'the user who locked this task'} can remove the lock.`);
+                    return;
+                  }
+                  toggleLockMutation.mutate();
+                }}
+                title={
+                  isTaskLocked
+                    ? `Locked by ${activeTask?.lockedBy?.name || 'Lead/Admin'}. Deletion is blocked. ${
+                        canUnlock ? 'Click to unlock.' : `Only ${activeTask?.lockedBy?.name || 'the locker'} can unlock.`
+                      }`
+                    : canLock
+                    ? 'Lock task to prevent deletion'
+                    : 'Only Team Leads and Admins can lock tasks'
+                }
+                className={`p-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+                  isTaskLocked
+                    ? 'bg-rose-100 text-rose-900 border border-rose-300 shadow-2xs hover:bg-rose-200'
+                    : 'text-gray-500 hover:text-[#111827] hover:bg-white border border-gray-200'
+                }`}
+              >
+                {isTaskLocked ? (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-rose-700" />
+                    <span className="text-[11px] font-bold text-rose-800">LOCKED</span>
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="w-3.5 h-3.5 text-gray-500" />
+                    <span className="text-[11px] font-medium text-gray-600 hidden sm:inline">Lock</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Visibility Restriction Toggle */}
             <button
               type="button"
               disabled={!isEditing || toggleRestrictMutation.isPending}
@@ -1202,39 +1465,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   : 'text-gray-400 hover:text-[#111827] hover:bg-white border border-transparent'
               }`}
             >
-              {isRestricted ? (
-                <Lock className="w-4 h-4 text-amber-700" />
-              ) : (
-                <Unlock className="w-4 h-4 text-gray-500" />
-              )}
-            </button>
-
-            {/* Watchers Toggle Button */}
-            <button
-              type="button"
-              disabled={!isEditing || toggleWatchMutation.isPending}
-              onClick={() => toggleWatchMutation.mutate()}
-              title={
-                isUserWatching
-                  ? `Watching this issue (${watchersCount} watchers) — Click to unwatch`
-                  : `Watch this issue (${watchersCount} watchers) — Click to watch`
-              }
-              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg transition-all cursor-pointer border ${
-                isUserWatching
-                  ? 'bg-blue-50 text-blue-700 border-blue-200 shadow-2xs hover:bg-blue-100'
-                  : 'text-gray-600 hover:text-[#111827] hover:bg-white border-gray-200'
-              }`}
-            >
-              <Eye className={`w-3.5 h-3.5 ${isUserWatching ? 'text-blue-600 fill-blue-100' : 'text-gray-500'}`} />
-              <span className="font-bold">{watchersCount}</span>
-            </button>
-
-            <button
-              onClick={handleCopyLink}
-              title={copiedLink ? 'Link Copied!' : 'Share Issue'}
-              className="p-1.5 text-gray-500 hover:text-[#111827] hover:bg-white rounded-lg transition-colors cursor-pointer relative"
-            >
-              {copiedLink ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
+              <Eye className="w-4 h-4 text-gray-500" />
             </button>
 
             <button
@@ -1245,7 +1476,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
 
-            {isEditing && canDeleteTask && (
+            {isEditing && isTaskLocked && (
+              <div
+                title={`This task is locked by ${activeTask?.lockedBy?.name || 'Lead/Admin'} and cannot be deleted.`}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed select-none"
+              >
+                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                <span className="hidden sm:inline">Deletion Blocked</span>
+              </div>
+            )}
+
+            {isEditing && !isTaskLocked && canDeleteTask && (
               <button
                 type="button"
                 onClick={() => setIsDeleteModalOpen(true)}
@@ -1265,6 +1506,31 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Task Locked Warning Banner */}
+        {isTaskLocked && (
+          <div className="bg-rose-50 border-b border-rose-200 px-6 py-2.5 text-xs font-semibold text-rose-800 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>
+                <strong>Task Locked:</strong> Locked by {activeTask?.lockedBy?.name || 'a Team Lead/Admin'}
+                {activeTask?.lockedAt ? ` on ${new Date(activeTask.lockedAt).toLocaleDateString()}` : ''}.
+                {' '}Deletion of this task and all its child tasks is completely blocked.
+                {' '}<strong>Only {activeTask?.lockedBy?.name || 'the person who locked it'} can unlock it.</strong>
+              </span>
+            </div>
+            {canUnlock && (
+              <button
+                type="button"
+                onClick={() => toggleLockMutation.mutate()}
+                disabled={toggleLockMutation.isPending}
+                className="px-2.5 py-1 bg-white hover:bg-rose-100 border border-rose-300 text-rose-700 rounded-md text-[11px] font-bold shadow-2xs transition-colors cursor-pointer shrink-0"
+              >
+                Unlock Task
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Modal Error Banner */}
         {formError && (
@@ -1327,7 +1593,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 type="text"
                 required
                 disabled={!canEditFullFields}
-                placeholder="Issue summary / title..."
+                placeholder="Task summary / title..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className={`w-full text-lg sm:text-xl font-bold text-[#111827] placeholder-gray-400 border-none outline-none focus:ring-0 px-0 py-1 bg-transparent hover:bg-gray-50/50 rounded-lg transition-colors ${
@@ -1598,7 +1864,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                           </div>
 
                           {/* Member Assignee Selector */}
-                          {canManageSubtasks ? (
+                          {canAssignOthers ? (
                             <select
                               value={subAssignee?._id || subAssignee || ''}
                               onChange={(e) =>
@@ -1622,10 +1888,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                               })}
                             </select>
                           ) : (
-                            subAssignee && (
+                            subAssignee ? (
                               <span className="text-[11px] font-semibold text-gray-600 bg-white border border-gray-200 px-2 py-1 rounded-lg flex items-center gap-1 shadow-2xs">
                                 <User className="w-3 h-3 text-gray-400" />
                                 {subAssignee.name || 'Assigned'}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-gray-400 italic px-2 py-1">
+                                Unassigned
                               </span>
                             )
                           )}
@@ -1658,16 +1928,64 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                             </button>
                           )}
 
-                          {/* Delete Subtask */}
-                          {canManageSubtasks && (
+                          {/* Subtask Lock Toggle */}
+                          {isEditing && (
                             <button
                               type="button"
-                              onClick={() => deleteSubtaskMutation.mutate(sub._id)}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-rose-600 rounded transition-all cursor-pointer"
-                              title="Delete Subtask"
+                              disabled={toggleLockMutation.isPending || (sub.isLocked && !(isLevel1 || ((sub.lockedBy?._id || sub.lockedBy)?.toString() === currentUserIdStr)))}
+                              onClick={() => {
+                                const isLockedByMe = (sub.lockedBy?._id || sub.lockedBy)?.toString() === currentUserIdStr;
+                                if (sub.isLocked && !isLevel1 && !isLockedByMe) {
+                                  alert(`Only ${sub.lockedBy?.name || 'the user who locked this subtask'} can remove the lock.`);
+                                  return;
+                                }
+                                toggleLockMutation.mutate({ subtaskId: sub._id });
+                              }}
+                              className={`p-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                                sub.isLocked
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                  : 'text-gray-400 hover:text-amber-600 hover:bg-gray-100 border border-transparent'
+                              }`}
+                              title={
+                                sub.isLocked
+                                  ? `Subtask locked by ${sub.lockedBy?.name || 'Lead/Admin'}. Deletion is blocked. ${
+                                      (isLevel1 || ((sub.lockedBy?._id || sub.lockedBy)?.toString() === currentUserIdStr))
+                                        ? 'Click to unlock.'
+                                        : `Only ${sub.lockedBy?.name || 'the locker'} can unlock.`
+                                    }`
+                                  : 'Lock subtask to prevent deletion'
+                              }
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              {sub.isLocked ? (
+                                <>
+                                  <Lock className="w-3.5 h-3.5 text-rose-600" />
+                                  <span className="text-[10px] font-bold text-rose-800 hidden sm:inline">LOCKED</span>
+                                </>
+                              ) : (
+                                <Unlock className="w-3.5 h-3.5 text-gray-400" />
+                              )}
                             </button>
+                          )}
+
+                          {/* Delete Subtask */}
+                          {canManageSubtasks && (
+                            sub.isLocked ? (
+                              <span
+                                className="p-1 text-rose-400 cursor-not-allowed"
+                                title={`Subtask locked by ${sub.lockedBy?.name || 'Lead/Admin'} - deletion is blocked`}
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => deleteSubtaskMutation.mutate(sub._id)}
+                                className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-rose-600 rounded transition-all cursor-pointer"
+                                title="Delete Subtask"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )
                           )}
                         </div>
                       </div>
@@ -1767,22 +2085,31 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                                 Assignee
                               </label>
-                              <select
-                                value={subtaskEditForm.assigneeId}
-                                onChange={(e) => setSubtaskEditForm({ ...subtaskEditForm, assigneeId: e.target.value })}
-                                className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs outline-none"
-                              >
-                                <option value="">Unassigned</option>
-                                {assignableMembers.map((m: any) => {
-                                  const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                                  const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
-                                  return (
-                                    <option key={mId} value={mId}>
-                                      {mName}
-                                    </option>
-                                  );
-                                })}
-                              </select>
+                              {canAssignOthers ? (
+                                <select
+                                  value={subtaskEditForm.assigneeId}
+                                  onChange={(e) => setSubtaskEditForm({ ...subtaskEditForm, assigneeId: e.target.value })}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs outline-none"
+                                >
+                                  <option value="">Unassigned</option>
+                                  {assignableMembers.map((m: any) => {
+                                    const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                    const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                    return (
+                                      <option key={mId} value={mId}>
+                                        {mName}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              ) : (
+                                <div className="w-full px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-600 font-medium">
+                                  {assignableMembers.find((m: any) => {
+                                    const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                    return mId === subtaskEditForm.assigneeId;
+                                  })?.name || 'Unassigned (Lead-assigned only)'}
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -1822,123 +2149,429 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                         </div>
                       )}
 
-                      {/* Microtasks Section under this Subtask */}
+                      {/* Mini-tasks Section under this Subtask */}
                       <div className="border-t border-gray-100 bg-slate-50/50 p-2.5">
                         <div className="flex items-center justify-between mb-1.5">
                           <button
                             type="button"
                             onClick={() =>
-                              setIsMicrotasksOpen((prev) => ({
+                              setIsMinitasksOpen((prev) => ({
                                 ...prev,
                                 [sub._id]: !prev[sub._id]
                               }))
                             }
-                            className="flex items-center gap-1.5 text-[11px] font-bold text-gray-700 hover:text-blue-600 cursor-pointer"
+                            className="flex items-center gap-1.5 text-[11px] font-bold text-gray-700 hover:text-teal-600 cursor-pointer"
                           >
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                            <span>Microtasks</span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                            <span>Mini-tasks</span>
                             <span className="text-[10px] font-semibold text-gray-500 px-1.5 py-0.2 rounded-full bg-white border border-gray-200">
-                              {(sub.microtasks || []).filter((m: any) => m.isCompleted || m.status === 'DONE').length}/
-                              {(sub.microtasks || []).length}
+                              {(sub.minitasks || []).filter((m: any) => m.isCompleted || m.status === 'DONE').length}/
+                              {(sub.minitasks || []).length}
                             </span>
                           </button>
                         </div>
 
-                        {/* List of Microtasks */}
-                        {(isMicrotasksOpen[sub._id] !== false || (sub.microtasks && sub.microtasks.length > 0)) && (
-                          <div className="space-y-1.5 mb-2 pl-2 border-l-2 border-blue-100">
-                            {(sub.microtasks || []).map((mic: any) => {
-                              const isMicDone = mic.isCompleted || mic.status === 'DONE';
-                              const isMicHighlighted =
-                                highlightedItemId === mic._id ||
-                                (mic.key && highlightedItemId === mic.key);
+                        {/* List of Mini-tasks */}
+                        {(isMinitasksOpen[sub._id] !== false || (sub.minitasks && sub.minitasks.length > 0)) && (
+                          <div className="space-y-1.5 mb-2 pl-2 border-l-2 border-teal-100">
+                            {(sub.minitasks || []).map((mini: any) => {
+                              const isMiniDone = mini.isCompleted || mini.status === 'DONE';
+                              const isMiniHighlighted =
+                                highlightedItemId === mini._id ||
+                                (mini.key && highlightedItemId === mini.key);
+                              const miniAssignee = mini.assigneeId;
+                              const miniAssigneeId = (typeof miniAssignee === 'object' ? miniAssignee?._id : miniAssignee)?.toString();
+                              const isMiniAssignee = miniAssigneeId && miniAssigneeId === currentUserIdStr;
+                              const canManageThisMinitask = canEditFullFields || isTaskAssignee || isSubAssignee || isMiniAssignee;
 
                               return (
                                 <div
-                                  key={mic._id}
-                                  id={`microtask-${mic._id}`}
-                                  data-microtask-key={mic.key}
-                                  className={`flex items-center justify-between gap-2 p-1.5 rounded-lg border text-xs shadow-2xs group/mic transition-all ${
-                                    isMicHighlighted
-                                      ? 'ring-4 ring-purple-600/95 border-purple-500 bg-purple-100 shadow-md animate-pulse'
-                                      : 'bg-white border-gray-200/80 hover:border-blue-200'
+                                  key={mini._id}
+                                  id={`minitask-${mini._id}`}
+                                  data-minitask-key={mini.key}
+                                  className={`flex flex-col gap-1.5 p-2 rounded-lg border text-xs shadow-2xs group/mini transition-all ${
+                                    isMiniHighlighted
+                                      ? 'ring-4 ring-teal-500/95 border-teal-500 bg-teal-100 shadow-md animate-pulse'
+                                      : 'bg-white border-gray-200/80 hover:border-teal-200'
                                   }`}
                                 >
-                                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                                    <input
-                                      type="checkbox"
-                                      disabled={!canToggleThisSubtask}
-                                      checked={isMicDone}
-                                      onChange={(e) =>
-                                        toggleMicrotaskMutation.mutate({
-                                          subtaskId: sub._id,
-                                          microtaskId: mic._id,
-                                          isCompleted: e.target.checked
-                                        })
-                                      }
-                                      className="rounded text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
-                                    />
-                                    {mic.key && (
-                                      <span className="text-[9px] font-mono text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200 shrink-0">
-                                        {mic.key}
-                                      </span>
-                                    )}
-                                    <span
-                                      className={`truncate text-xs ${
-                                        isMicDone ? 'line-through text-gray-400' : 'text-gray-800 font-medium'
-                                      }`}
-                                    >
-                                      {mic.title}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
-                                    {canToggleThisSubtask ? (
-                                      <select
-                                        value={(typeof mic.assigneeId === 'object' ? mic.assigneeId?._id : mic.assigneeId) || ''}
+                                  {/* Mini-task Header Row */}
+                                  <div className="flex items-center justify-between gap-2 w-full">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                      <input
+                                        type="checkbox"
+                                        disabled={!canManageThisMinitask}
+                                        checked={isMiniDone}
                                         onChange={(e) =>
-                                          toggleMicrotaskMutation.mutate({
+                                          toggleMinitaskMutation.mutate({
                                             subtaskId: sub._id,
-                                            microtaskId: mic._id,
-                                            assigneeId: e.target.value || null
+                                            minitaskId: mini._id,
+                                            isCompleted: e.target.checked
                                           })
                                         }
-                                        className="text-[10px] font-medium bg-white border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 text-gray-700 outline-none cursor-pointer max-w-[110px] truncate shadow-2xs"
-                                        title="Change Microtask Assignee"
-                                      >
-                                        <option value="">Unassigned</option>
-                                        {assignableMembers.map((m: any) => {
-                                          const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                                          const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
-                                          return (
-                                            <option key={mId} value={mId}>
-                                              {mName}
-                                            </option>
-                                          );
-                                        })}
-                                      </select>
-                                    ) : (
-                                      mic.assigneeId?.name && (
-                                        <span className="text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                          <User className="w-2.5 h-2.5 text-gray-400" />
-                                          {mic.assigneeId.name}
+                                        className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                                      />
+                                      {mini.key && (
+                                        <span className="text-[9px] font-mono text-teal-800 bg-teal-50 px-1 py-0.2 rounded border border-teal-200 shrink-0">
+                                          {mini.key}
                                         </span>
-                                      )
-                                    )}
-                                    {canToggleThisSubtask && (
+                                      )}
+                                      <span
+                                        className={`truncate text-xs ${
+                                          isMiniDone ? 'line-through text-gray-400' : 'text-gray-800 font-medium'
+                                        }`}
+                                      >
+                                        {mini.title}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
+                                      {canAssignOthers ? (
+                                        <select
+                                          value={miniAssigneeId || ''}
+                                          onChange={(e) =>
+                                            toggleMinitaskMutation.mutate({
+                                              subtaskId: sub._id,
+                                              minitaskId: mini._id,
+                                              assigneeId: e.target.value || null
+                                            })
+                                          }
+                                          className="text-[10px] font-medium bg-white border border-gray-200 hover:border-teal-300 rounded px-1.5 py-0.5 text-gray-700 outline-none cursor-pointer max-w-[110px] truncate shadow-2xs"
+                                          title="Change Mini-task Assignee"
+                                        >
+                                          <option value="">Unassigned</option>
+                                          {assignableMembers.map((m: any) => {
+                                            const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                            const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                            return (
+                                              <option key={mId} value={mId}>
+                                                {mName}
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      ) : (
+                                        miniAssignee ? (
+                                          <span className="text-gray-600 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px]">
+                                            <User className="w-2.5 h-2.5 text-gray-400" />
+                                            {miniAssignee.name || 'Assigned'}
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-400 italic text-[10px]">Unassigned</span>
+                                        )
+                                      )}
+                                      {/* Mini-task Lock Toggle */}
+                                      {isEditing && (
+                                        <button
+                                          type="button"
+                                          disabled={toggleLockMutation.isPending || (mini.isLocked && !(isLevel1 || ((mini.lockedBy?._id || mini.lockedBy)?.toString() === currentUserIdStr)))}
+                                          onClick={() => {
+                                            const isLockedByMe = (mini.lockedBy?._id || mini.lockedBy)?.toString() === currentUserIdStr;
+                                            if (mini.isLocked && !isLevel1 && !isLockedByMe) {
+                                              alert(`Only ${mini.lockedBy?.name || 'the user who locked this mini-task'} can remove the lock.`);
+                                              return;
+                                            }
+                                            toggleLockMutation.mutate({ subtaskId: sub._id, minitaskId: mini._id });
+                                          }}
+                                          className={`p-0.5 rounded transition-all cursor-pointer flex items-center gap-0.5 ${
+                                            mini.isLocked
+                                              ? 'text-rose-700 bg-rose-100 border border-rose-300'
+                                              : 'text-gray-400 hover:text-amber-600'
+                                          }`}
+                                          title={
+                                            mini.isLocked
+                                              ? `Mini-task locked by ${mini.lockedBy?.name || 'Lead/Admin'}. Deletion is blocked. ${
+                                                  (isLevel1 || ((mini.lockedBy?._id || mini.lockedBy)?.toString() === currentUserIdStr))
+                                                    ? 'Click to unlock.'
+                                                    : `Only ${mini.lockedBy?.name || 'the locker'} can unlock.`
+                                                }`
+                                              : 'Lock mini-task to prevent deletion'
+                                          }
+                                        >
+                                          {mini.isLocked ? (
+                                            <Lock className="w-3 h-3 text-rose-600" />
+                                          ) : (
+                                            <Unlock className="w-3 h-3 text-gray-400" />
+                                          )}
+                                        </button>
+                                      )}
+                                      {canManageThisMinitask && (
+                                        mini.isLocked ? (
+                                          <span
+                                            className="p-0.5 text-rose-400 cursor-not-allowed"
+                                            title={`Mini-task locked by ${mini.lockedBy?.name || 'Lead/Admin'} - deletion is blocked`}
+                                          >
+                                            <Lock className="w-3 h-3" />
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              deleteMinitaskMutation.mutate({
+                                                subtaskId: sub._id,
+                                                minitaskId: mini._id
+                                              })
+                                            }
+                                            className="opacity-0 group-hover/mini:opacity-100 p-0.5 text-gray-400 hover:text-rose-600 rounded cursor-pointer"
+                                            title="Delete Mini-task"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        )
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Micro-tasks Section under this Mini-task */}
+                                  <div className="w-full mt-1 pt-1.5 border-t border-teal-100/80 bg-purple-50/20 rounded-md p-1.5 flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between">
                                       <button
                                         type="button"
                                         onClick={() =>
-                                          deleteMicrotaskMutation.mutate({
-                                            subtaskId: sub._id,
-                                            microtaskId: mic._id
-                                          })
+                                          setIsMicrotasksOpen((prev) => ({
+                                            ...prev,
+                                            [mini._id]: !prev[mini._id]
+                                          }))
                                         }
-                                        className="opacity-0 group-hover/mic:opacity-100 p-0.5 text-gray-400 hover:text-rose-600 rounded cursor-pointer"
-                                        title="Delete Microtask"
+                                        className="flex items-center gap-1.5 text-[10px] font-bold text-purple-800 hover:text-purple-950 cursor-pointer"
                                       >
-                                        <Trash2 className="w-3 h-3" />
+                                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                                        <span>Micro-tasks</span>
+                                        <span className="text-[9px] font-semibold text-gray-500 px-1.5 py-0.2 rounded-full bg-white border border-gray-200">
+                                          {(mini.microtasks || []).filter((m: any) => m.isCompleted || m.status === 'DONE').length}/
+                                          {(mini.microtasks || []).length}
+                                        </span>
                                       </button>
+                                    </div>
+
+                                    {/* List of Micro-tasks */}
+                                    {(isMicrotasksOpen[mini._id] !== false || (mini.microtasks && mini.microtasks.length > 0)) && (
+                                      <div className="space-y-1 pl-2 border-l-2 border-purple-200">
+                                        {(mini.microtasks || []).map((mic: any) => {
+                                          const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                                          const isMicHighlighted =
+                                            highlightedItemId === mic._id ||
+                                            (mic.key && highlightedItemId === mic.key);
+                                          const micAssignee = mic.assigneeId;
+                                          const micAssigneeId = (typeof micAssignee === 'object' ? micAssignee?._id : micAssignee)?.toString();
+                                          const isMicAssignee = micAssigneeId && micAssigneeId === currentUserIdStr;
+                                          const canManageThisMicrotask = canManageThisMinitask || isMicAssignee;
+
+                                          return (
+                                            <div
+                                              key={mic._id}
+                                              id={`microtask-${mic._id}`}
+                                              data-microtask-key={mic.key}
+                                              className={`flex items-center justify-between gap-1.5 p-1 rounded border text-[11px] shadow-2xs group/mic transition-all ${
+                                                isMicHighlighted
+                                                  ? 'ring-4 ring-purple-600/95 border-purple-500 bg-purple-100 shadow-md animate-pulse'
+                                                  : 'bg-white border-purple-100 hover:border-purple-300'
+                                              }`}
+                                            >
+                                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                                <input
+                                                  type="checkbox"
+                                                  disabled={!canManageThisMicrotask}
+                                                  checked={isMicDone}
+                                                  onChange={(e) =>
+                                                    toggleMicrotaskMutation.mutate({
+                                                      subtaskId: sub._id,
+                                                      minitaskId: mini._id,
+                                                      microtaskId: mic._id,
+                                                      isCompleted: e.target.checked
+                                                    })
+                                                  }
+                                                  className="rounded text-purple-600 focus:ring-purple-500 h-3 w-3 cursor-pointer"
+                                                />
+                                                {mic.key && (
+                                                  <span className="text-[8px] font-mono text-purple-800 bg-purple-50 px-1 py-0.2 rounded border border-purple-200 shrink-0">
+                                                    {mic.key}
+                                                  </span>
+                                                )}
+                                                <span
+                                                  className={`truncate text-[11px] ${
+                                                    isMicDone ? 'line-through text-gray-400' : 'text-gray-800 font-medium'
+                                                  }`}
+                                                >
+                                                  {mic.title}
+                                                </span>
+                                              </div>
+
+                                              <div className="flex items-center gap-1 shrink-0 text-[9px]">
+                                                {canAssignOthers ? (
+                                                  <select
+                                                    value={micAssigneeId || ''}
+                                                    onChange={(e) =>
+                                                      toggleMicrotaskMutation.mutate({
+                                                        subtaskId: sub._id,
+                                                        minitaskId: mini._id,
+                                                        microtaskId: mic._id,
+                                                        assigneeId: e.target.value || null
+                                                      })
+                                                    }
+                                                    className="text-[9px] font-medium bg-white border border-gray-200 hover:border-purple-300 rounded px-1 py-0.5 text-gray-700 outline-none cursor-pointer max-w-[95px] truncate shadow-2xs"
+                                                    title="Change Micro-task Assignee"
+                                                  >
+                                                    <option value="">Unassigned</option>
+                                                    {assignableMembers.map((m: any) => {
+                                                      const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                                      const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                                      return (
+                                                        <option key={mId} value={mId}>
+                                                          {mName}
+                                                        </option>
+                                                      );
+                                                    })}
+                                                  </select>
+                                                ) : (
+                                                  micAssignee && (
+                                                    <span className="text-gray-500 bg-gray-50 border border-gray-200 px-1 py-0.5 rounded flex items-center gap-1 text-[9px]">
+                                                      <User className="w-2 h-2 text-gray-400" />
+                                                      {micAssignee.name || 'Assigned'}
+                                                    </span>
+                                                  )
+                                                )}
+                                                {/* Micro-task Lock Toggle */}
+                                                {isEditing && (
+                                                  <button
+                                                    type="button"
+                                                    disabled={toggleLockMutation.isPending || (mic.isLocked && !(isLevel1 || ((mic.lockedBy?._id || mic.lockedBy)?.toString() === currentUserIdStr)))}
+                                                    onClick={() => {
+                                                      const isLockedByMe = (mic.lockedBy?._id || mic.lockedBy)?.toString() === currentUserIdStr;
+                                                      if (mic.isLocked && !isLevel1 && !isLockedByMe) {
+                                                        alert(`Only ${mic.lockedBy?.name || 'the user who locked this micro-task'} can remove the lock.`);
+                                                        return;
+                                                      }
+                                                      toggleLockMutation.mutate({ subtaskId: sub._id, minitaskId: mini._id, microtaskId: mic._id });
+                                                    }}
+                                                    className={`p-0.5 rounded transition-all cursor-pointer flex items-center gap-0.5 ${
+                                                      mic.isLocked
+                                                        ? 'text-rose-700 bg-rose-100 border border-rose-300'
+                                                        : 'text-gray-400 hover:text-emerald-600'
+                                                    }`}
+                                                    title={
+                                                      mic.isLocked
+                                                        ? `Micro-task locked by ${mic.lockedBy?.name || 'Lead/Admin'}. Deletion is blocked. ${
+                                                            (isLevel1 || ((mic.lockedBy?._id || mic.lockedBy)?.toString() === currentUserIdStr))
+                                                              ? 'Click to unlock.'
+                                                              : `Only ${mic.lockedBy?.name || 'the locker'} can unlock.`
+                                                          }`
+                                                        : 'Lock micro-task to prevent deletion'
+                                                    }
+                                                  >
+                                                    {mic.isLocked ? (
+                                                      <Lock className="w-2.5 h-2.5 text-rose-600" />
+                                                    ) : (
+                                                      <Unlock className="w-2.5 h-2.5 text-gray-400" />
+                                                    )}
+                                                  </button>
+                                                )}
+                                                {canManageThisMicrotask && (
+                                                  mic.isLocked ? (
+                                                    <span
+                                                      className="p-0.5 text-rose-400 cursor-not-allowed"
+                                                      title={`Micro-task locked by ${mic.lockedBy?.name || 'Lead/Admin'} - deletion is blocked`}
+                                                    >
+                                                      <Lock className="w-2.5 h-2.5" />
+                                                    </span>
+                                                  ) : (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        deleteMicrotaskMutation.mutate({
+                                                          subtaskId: sub._id,
+                                                          minitaskId: mini._id,
+                                                          microtaskId: mic._id
+                                                        })
+                                                      }
+                                                      className="opacity-0 group-hover/mic:opacity-100 p-0.5 text-gray-400 hover:text-rose-600 rounded cursor-pointer"
+                                                      title="Delete Micro-task"
+                                                    >
+                                                      <Trash2 className="w-2.5 h-2.5" />
+                                                    </button>
+                                                  )
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* Inline Add Micro-task Form (under this Mini-task) */}
+                                    {canManageThisMinitask && (
+                                      <div className="flex items-center gap-1 mt-0.5">
+                                        <input
+                                          type="text"
+                                          placeholder="+ Add micro-task..."
+                                          value={newMicrotaskTitles[mini._id] || ''}
+                                          onChange={(e) =>
+                                            setNewMicrotaskTitles((prev) => ({
+                                              ...prev,
+                                              [mini._id]: e.target.value
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              const title = (newMicrotaskTitles[mini._id] || '').trim();
+                                              if (!title) return;
+                                              addMicrotaskMutation.mutate({
+                                                subtaskId: sub._id,
+                                                minitaskId: mini._id,
+                                                title,
+                                                assigneeId: canAssignOthers ? (newMicrotaskAssignees[mini._id] || undefined) : (currentUserIdStr || undefined)
+                                              });
+                                            }
+                                          }}
+                                          className="flex-1 px-2 py-0.5 text-[11px] bg-white border border-gray-200 rounded-md outline-none focus:border-purple-500"
+                                        />
+                                        {canAssignOthers ? (
+                                          <select
+                                            value={newMicrotaskAssignees[mini._id] || ''}
+                                            onChange={(e) =>
+                                              setNewMicrotaskAssignees((prev) => ({
+                                                ...prev,
+                                                [mini._id]: e.target.value
+                                              }))
+                                            }
+                                            className="text-[9px] bg-white border border-gray-200 rounded-md px-1 py-0.5 text-gray-600 outline-none max-w-[95px] cursor-pointer truncate"
+                                          >
+                                            <option value="">Assignee</option>
+                                            {assignableMembers.map((m: any) => {
+                                              const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                              const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                              return (
+                                                <option key={mId} value={mId}>
+                                                  {mName}
+                                                </option>
+                                              );
+                                            })}
+                                          </select>
+                                        ) : (
+                                          <span className="text-[9px] font-semibold text-purple-800 bg-purple-50 border border-purple-200 rounded-md px-1.5 py-0.5 shrink-0 flex items-center gap-1">
+                                            <User className="w-2.5 h-2.5" />
+                                            <span>{user?.name || (user?.email ? user.email.split('@')[0] : 'Me')}</span>
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          disabled={!(newMicrotaskTitles[mini._id] || '').trim() || addMicrotaskMutation.isPending}
+                                          onClick={() => {
+                                            const title = (newMicrotaskTitles[mini._id] || '').trim();
+                                            if (!title) return;
+                                            addMicrotaskMutation.mutate({
+                                              subtaskId: sub._id,
+                                              minitaskId: mini._id,
+                                              title,
+                                              assigneeId: canAssignOthers ? (newMicrotaskAssignees[mini._id] || undefined) : (currentUserIdStr || undefined)
+                                            });
+                                          }}
+                                          className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-[10px] font-bold cursor-pointer disabled:opacity-40"
+                                        >
+                                          + Add
+                                        </button>
+                                      </div>
                                     )}
                                   </div>
                                 </div>
@@ -1947,15 +2580,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                           </div>
                         )}
 
-                        {/* Inline Add Microtask Form */}
+                        {/* Inline Add Mini-task Form (under this Subtask) */}
                         {canToggleThisSubtask && (
                           <div className="flex items-center gap-1.5 mt-1">
                             <input
                               type="text"
-                              placeholder="+ Add microtask..."
-                              value={newMicrotaskTitles[sub._id] || ''}
+                              placeholder="+ Add mini-task..."
+                              value={newMinitaskTitles[sub._id] || ''}
                               onChange={(e) =>
-                                setNewMicrotaskTitles((prev) => ({
+                                setNewMinitaskTitles((prev) => ({
                                   ...prev,
                                   [sub._id]: e.target.value
                                 }))
@@ -1963,51 +2596,58 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   e.preventDefault();
-                                  const title = (newMicrotaskTitles[sub._id] || '').trim();
+                                  const title = (newMinitaskTitles[sub._id] || '').trim();
                                   if (!title) return;
-                                  addMicrotaskMutation.mutate({
+                                  addMinitaskMutation.mutate({
                                     subtaskId: sub._id,
                                     title,
-                                    assigneeId: newMicrotaskAssignees[sub._id] || undefined
+                                    assigneeId: canAssignOthers ? (newMinitaskAssignees[sub._id] || undefined) : (currentUserIdStr || undefined)
                                   });
                                 }
                               }}
-                              className="flex-1 px-2.5 py-1 text-xs bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500"
+                              className="flex-1 px-2.5 py-1 text-xs bg-white border border-gray-200 rounded-lg outline-none focus:border-teal-500"
                             />
-                            <select
-                              value={newMicrotaskAssignees[sub._id] || ''}
-                              onChange={(e) =>
-                                setNewMicrotaskAssignees((prev) => ({
-                                  ...prev,
-                                  [sub._id]: e.target.value
-                                }))
-                              }
-                              className="text-[10px] bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-gray-600 outline-none max-w-[100px] truncate"
-                            >
-                              <option value="">Assignee</option>
-                              {assignableMembers.map((m: any) => {
-                                const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                                const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
-                                return (
-                                  <option key={mId} value={mId}>
-                                    {mName}
-                                  </option>
-                                );
-                              })}
-                            </select>
+                            {canAssignOthers ? (
+                              <select
+                                value={newMinitaskAssignees[sub._id] || ''}
+                                onChange={(e) =>
+                                  setNewMinitaskAssignees((prev) => ({
+                                    ...prev,
+                                    [sub._id]: e.target.value
+                                  }))
+                                }
+                                className="text-[10px] bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-gray-600 outline-none max-w-[100px] truncate"
+                              >
+                                <option value="">Assignee</option>
+                                {assignableMembers.map((m: any) => {
+                                  const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                                  const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                                  return (
+                                    <option key={mId} value={mId}>
+                                      {mName}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1 shrink-0 flex items-center gap-1" title="Assigned to you">
+                                <User className="w-2.5 h-2.5" />
+                                <span>{user?.name || (user?.email ? user.email.split('@')[0] : 'Me')}</span>
+                              </span>
+                            )}
                             <button
                               type="button"
-                              disabled={!(newMicrotaskTitles[sub._id] || '').trim() || addMicrotaskMutation.isPending}
+                              disabled={!(newMinitaskTitles[sub._id] || '').trim() || addMinitaskMutation.isPending}
                               onClick={() => {
-                                const title = (newMicrotaskTitles[sub._id] || '').trim();
+                                const title = (newMinitaskTitles[sub._id] || '').trim();
                                 if (!title) return;
-                                addMicrotaskMutation.mutate({
+                                addMinitaskMutation.mutate({
                                   subtaskId: sub._id,
                                   title,
-                                  assigneeId: newMicrotaskAssignees[sub._id] || undefined
+                                  assigneeId: canAssignOthers ? (newMinitaskAssignees[sub._id] || undefined) : (currentUserIdStr || undefined)
                                 });
                               }}
-                              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-40"
+                              className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-40"
                             >
                               + Add
                             </button>
@@ -2400,22 +3040,29 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                       }}
                       className="flex-1 min-w-[140px] px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-xl outline-none focus:border-[#0F172A]"
                     />
-                    <select
-                      value={newSubtaskAssigneeId}
-                      onChange={(e) => setNewSubtaskAssigneeId(e.target.value)}
-                      className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-xl text-gray-700 outline-none cursor-pointer"
-                    >
-                      <option value="">Assign member...</option>
-                      {assignableMembers.map((m: any) => {
-                        const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                        const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
-                        return (
-                          <option key={mId} value={mId}>
-                            {mName}
-                          </option>
-                        );
-                      })}
-                    </select>
+                    {canAssignOthers ? (
+                      <select
+                        value={newSubtaskAssigneeId}
+                        onChange={(e) => setNewSubtaskAssigneeId(e.target.value)}
+                        className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-xl text-gray-700 outline-none cursor-pointer"
+                      >
+                        <option value="">Assign member...</option>
+                        {assignableMembers.map((m: any) => {
+                          const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                          const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                          return (
+                            <option key={mId} value={mId}>
+                              {mName}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : (
+                      <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl px-2.5 py-1.5 shrink-0 flex items-center gap-1" title="Assigned to you">
+                        <User className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>{user?.name || (user?.email ? user.email.split('@')[0] : 'Me')}</span>
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setIsAddSubtaskDetailsOpen(!isAddSubtaskDetailsOpen)}
@@ -3270,7 +3917,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   ) : (
                     <select
                       value={assigneeId}
-                      disabled={!canEditFullFields}
+                      disabled={!canAssignOthers}
                       onChange={(e) => setAssigneeId(e.target.value)}
                       className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-xl font-medium text-[#111827] outline-none cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
                     >
@@ -3360,11 +4007,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded-xl font-medium text-[#111827] outline-none cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
                   >
                     <option value="">No Sprint (Backlog)</option>
-                    {sprintsData?.map((s: any) => (
-                      <option key={s._id} value={s._id}>
-                        {s.name} • [{s.status}]
-                      </option>
-                    ))}
+                    {sprintsData?.map((s: any) => {
+                      const sprintTeamsStr = s.teams && s.teams.length > 0 ? s.teams.join(', ') : 'All Teams';
+                      return (
+                        <option key={s._id} value={s._id}>
+                          {s.name} • [{s.status}] — [{sprintTeamsStr}]
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -3513,6 +4163,31 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Task Lock Status Banner */}
+            {isEditing && isTaskLocked && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-2 text-xs text-rose-800">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Lock className="w-4 h-4 text-rose-600 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold truncate">Main Task is Locked</div>
+                    <div className="text-[10px] text-rose-700 truncate">
+                      By {activeTask?.lockedBy?.name || 'Lead/Admin'} (Deletion blocked)
+                    </div>
+                  </div>
+                </div>
+                {canUnlock && (
+                  <button
+                    type="button"
+                    disabled={toggleLockMutation.isPending}
+                    onClick={() => toggleLockMutation.mutate({})}
+                    className="px-2.5 py-1 bg-white hover:bg-rose-100 text-rose-700 font-bold rounded-lg border border-rose-300 text-[10px] shrink-0 cursor-pointer shadow-2xs"
+                  >
+                    Unlock
+                  </button>
+                )}
               </div>
             )}
 

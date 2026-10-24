@@ -169,9 +169,14 @@ export const InfiniteTaskList: React.FC<InfiniteTaskListProps> = ({
               {task.assigneeId ? (
                 <div
                   title={`Assigned: ${task.assigneeId.name}`}
-                  className="w-7 h-7 rounded-full bg-[#0F172A] text-white flex items-center justify-center font-bold text-xs uppercase shadow-xs"
+                  className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full shadow-2xs"
                 >
-                  {task.assigneeId.name.charAt(0)}
+                  <div className="w-5 h-5 rounded-full bg-[#0F172A] text-white flex items-center justify-center font-bold text-[10px] uppercase shrink-0">
+                    {task.assigneeId.name.charAt(0)}
+                  </div>
+                  <span className="text-xs font-semibold text-slate-800 truncate max-w-[120px]">
+                    {task.assigneeId.name}
+                  </span>
                 </div>
               ) : (
                 <div className="w-7 h-7 rounded-full bg-[#F3F4F6] text-[#0F172A]/40 border border-[#0F172A]/10 flex items-center justify-center text-[10px] font-bold">

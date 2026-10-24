@@ -50,9 +50,36 @@ import {
   FileSpreadsheet,
   Download,
   RefreshCw,
-  X
+  X,
+  Focus,
+  Eye
 } from 'lucide-react';
 import { downloadProjectExcel } from '../lib/excelExport';
+
+interface Microtask {
+  _id: string;
+  key?: string;
+  title: string;
+  description?: string;
+  status?: string;
+  isCompleted: boolean;
+  startDate?: string;
+  dueDate?: string;
+  assigneeId?: any;
+}
+
+interface Minitask {
+  _id: string;
+  key?: string;
+  title: string;
+  description?: string;
+  status?: string;
+  isCompleted: boolean;
+  startDate?: string;
+  dueDate?: string;
+  assigneeId?: any;
+  microtasks?: Microtask[];
+}
 
 interface Subtask {
   _id: string;
@@ -64,6 +91,7 @@ interface Subtask {
   startDate?: string;
   dueDate?: string;
   assigneeId?: any;
+  minitasks?: Minitask[];
   microtasks?: any[];
 }
 
@@ -84,11 +112,49 @@ interface Task {
   dueDate?: string;
   attachments?: any[];
   subtasks?: Subtask[];
+  isLocked?: boolean;
+  lockedBy?: any;
+  lockedAt?: string;
 }
+
+export const LEVEL_THEMES = {
+  MAIN: {
+    accentColor: '#4F46E5', // Indigo
+    badgeBg: '#EEF2FF',
+    badgeText: '#3730A3',
+    badgeBorder: '#C7D2FE',
+    label: 'MAIN TASK',
+    dotBg: 'bg-indigo-600'
+  },
+  SUBTASK: {
+    accentColor: '#0284C7', // Sky Blue
+    badgeBg: '#F0F9FF',
+    badgeText: '#075985',
+    badgeBorder: '#BAE6FD',
+    label: 'SUBTASK',
+    dotBg: 'bg-sky-600'
+  },
+  MINITASK: {
+    accentColor: '#D97706', // Amber / Orange
+    badgeBg: '#FFFBEB',
+    badgeText: '#92400E',
+    badgeBorder: '#FDE68A',
+    label: 'MINI-TASK',
+    dotBg: 'bg-amber-600'
+  },
+  MICROTASK: {
+    accentColor: '#059669', // Emerald / Green
+    badgeBg: '#ECFDF5',
+    badgeText: '#065F46',
+    badgeBorder: '#A7F3D0',
+    label: 'MICRO-TASK',
+    dotBg: 'bg-emerald-600'
+  }
+};
 
 interface KanbanBoardProps {
   projectId: string;
-  onSelectTask: (task: Task, context?: { targetSubtaskId?: string; targetMicrotaskId?: string }) => void;
+  onSelectTask: (task: Task, context?: { targetSubtaskId?: string; targetMicrotaskId?: string; targetMinitaskId?: string }) => void;
   onOpenCreateTask: (initialStatus?: string, initialTeam?: string, initialSprintId?: string) => void;
   searchQuery?: string;
 }
@@ -106,6 +172,103 @@ const DEFAULT_COLUMNS: BoardColumn[] = [
   { id: 'IN_REVIEW', label: 'Testing', color: 'bg-purple-500' },
   { id: 'DONE', label: 'Done', color: 'bg-emerald-500' },
 ];
+
+export interface TaskFamilyTheme {
+  accentColor: string;
+  badgeBg: string;
+  badgeText: string;
+  badgeBorder: string;
+  subtleBg: string;
+  subtleBorder: string;
+  familyIndex: number;
+}
+
+const CURATED_FAMILY_PALETTES = [
+  { accent: '#4F46E5', bg: '#EEF2FF', text: '#3730A3', border: '#C7D2FE' }, // 1. Indigo
+  { accent: '#059669', bg: '#ECFDF5', text: '#065F46', border: '#A7F3D0' }, // 2. Emerald
+  { accent: '#7C3AED', bg: '#F5F3FF', text: '#5B21B6', border: '#DDD6FE' }, // 3. Purple
+  { accent: '#D97706', bg: '#FFFBEB', text: '#92400E', border: '#FDE68A' }, // 4. Amber
+  { accent: '#0284C7', bg: '#F0F9FF', text: '#075985', border: '#BAE6FD' }, // 5. Sky Blue
+  { accent: '#E11D48', bg: '#FFF1F2', text: '#9F1239', border: '#FECDD3' }, // 6. Rose
+  { accent: '#0D9488', bg: '#F0FDFA', text: '#115E59', border: '#99F6E4' }, // 7. Teal
+  { accent: '#C026D3', bg: '#FDF4FF', text: '#86198F', border: '#F5D0FE' }, // 8. Fuchsia
+  { accent: '#EA580C', bg: '#FFF7ED', text: '#9A3412', border: '#FFEDD5' }, // 9. Orange
+  { accent: '#16A34A', bg: '#F0FDF4', text: '#166534', border: '#BBF7D0' }, // 10. Green
+  { accent: '#2563EB', bg: '#EFF6FF', text: '#1E40AF', border: '#BFDBFE' }, // 11. Royal Blue
+  { accent: '#9333EA', bg: '#FAF5FF', text: '#6B21A8', border: '#E9D5FF' }, // 12. Violet
+  { accent: '#0891B2', bg: '#ECFEFF', text: '#155E75', border: '#A5F3FC' }, // 13. Cyan
+  { accent: '#BE185D', bg: '#FDF2F8', text: '#831843', border: '#FBCFE8' }, // 14. Pink
+  { accent: '#334155', bg: '#F8FAFC', text: '#1E293B', border: '#CBD5E1' }, // 15. Slate
+  { accent: '#65A30D', bg: '#F7FEE7', text: '#3F6212', border: '#D9F99D' }, // 16. Lime
+  { accent: '#B45309', bg: '#FEF3C7', text: '#78350F', border: '#FCD34D' }, // 17. Ochre
+  { accent: '#4338CA', bg: '#E0E7FF', text: '#312E81', border: '#A5B4FC' }, // 18. Deep Indigo
+  { accent: '#047857', bg: '#D1FAE5', text: '#064E3B', border: '#6EE7B7' }, // 19. Deep Emerald
+  { accent: '#BE123C', bg: '#FFE4E6', text: '#881337', border: '#FDA4AF' }, // 20. Crimson
+];
+
+export function getMainTaskFamilyTheme(mainTask?: any, allTasks?: Task[]): TaskFamilyTheme {
+  if (!mainTask) {
+    return {
+      accentColor: '#3B82F6',
+      badgeBg: '#EFF6FF',
+      badgeText: '#1D4ED8',
+      badgeBorder: '#BFDBFE',
+      subtleBg: '#F8FAFC',
+      subtleBorder: '#E2E8F0',
+      familyIndex: 0
+    };
+  }
+
+  let index = -1;
+  if (Array.isArray(allTasks) && allTasks.length > 0) {
+    const foundIdx = allTasks.findIndex(t => String(t._id) === String(mainTask._id) || (t.key && mainTask.key && t.key === mainTask.key));
+    if (foundIdx >= 0) index = foundIdx;
+  }
+
+  if (index < 0 && mainTask.taskNumber) {
+    index = Number(mainTask.taskNumber) - 1;
+  }
+
+  if (index < 0 && mainTask.key) {
+    const match = String(mainTask.key).match(/-(\d+)$/);
+    if (match) index = Number(match[1]) - 1;
+  }
+
+  if (index < 0) {
+    const str = String(mainTask._id || mainTask.key || 'task');
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    index = Math.abs(hash) % 100;
+  }
+
+  if (index < CURATED_FAMILY_PALETTES.length) {
+    const p = CURATED_FAMILY_PALETTES[index];
+    return {
+      accentColor: p.accent,
+      badgeBg: p.bg,
+      badgeText: p.text,
+      badgeBorder: p.border,
+      subtleBg: p.bg,
+      subtleBorder: p.border,
+      familyIndex: index
+    };
+  }
+
+  // Golden ratio distribution for unlimited (50+) distinct colors
+  const hue = Math.round((index * 137.508) % 360);
+  return {
+    accentColor: `hsl(${hue}, 75%, 45%)`,
+    badgeBg: `hsl(${hue}, 90%, 96%)`,
+    badgeText: `hsl(${hue}, 85%, 25%)`,
+    badgeBorder: `hsl(${hue}, 70%, 82%)`,
+    subtleBg: `hsl(${hue}, 80%, 97%)`,
+    subtleBorder: `hsl(${hue}, 60%, 88%)`,
+    familyIndex: index
+  };
+}
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   projectId,
@@ -145,11 +308,13 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [newSprintGoal, setNewSprintGoal] = useState('');
   const [newSprintStartDate, setNewSprintStartDate] = useState('');
   const [newSprintEndDate, setNewSprintEndDate] = useState('');
+  const [newSprintTeams, setNewSprintTeams] = useState<string[]>([]);
   const [editSprintName, setEditSprintName] = useState('');
   const [editSprintGoal, setEditSprintGoal] = useState('');
   const [editSprintStartDate, setEditSprintStartDate] = useState('');
   const [editSprintEndDate, setEditSprintEndDate] = useState('');
   const [editSprintReason, setEditSprintReason] = useState('');
+  const [editSprintTeams, setEditSprintTeams] = useState<string[]>([]);
   const [nextSprintIdForIncomplete, setNextSprintIdForIncomplete] = useState('');
   const [localSearch, setLocalSearch] = useState(searchQuery || '');
   useEffect(() => {
@@ -204,6 +369,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   // Inline creation
   const [inlineCreateStatus, setInlineCreateStatus] = useState<string | null>(null);
   const [inlineTitle, setInlineTitle] = useState('');
+
+  // Task Family spotlight & focus states
+  const [hoveredFamilyKey, setHoveredFamilyKey] = useState<string | null>(null);
+  const [focusedFamilyKey, setFocusedFamilyKey] = useState<string | null>(null);
 
   // Fetch Project Sprints
   const { data: sprints = [], isLoading: isLoadingSprints } = useQuery({
@@ -272,16 +441,26 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   // Find the most appropriate active sprint for the current team (or project default)
   const activeSprint = useMemo(() => {
     if (activeSprints.length === 0) return null;
-    if (activeSprints.length === 1) return activeSprints[0];
 
-    // If multiple active sprints exist, match by active team name (e.g. "Firmware Sprint 1")
+    // If team filter is active, look for active sprint specifically designated for this team
     const teamNameToMatch = (selectedTeamFilter || '').toLowerCase().trim();
     if (teamNameToMatch && teamNameToMatch !== 'all') {
-      const match = activeSprints.find((s: any) => {
+      // 1. Exact match on participating teams
+      const teamMatch = activeSprints.find((s: any) =>
+        Array.isArray(s.teams) && s.teams.some((tm: string) => tm.toLowerCase().trim() === teamNameToMatch)
+      );
+      if (teamMatch) return teamMatch;
+
+      // 2. Name match (e.g. "Software Sprint 1")
+      const nameMatch = activeSprints.find((s: any) => {
         const sName = (s.name || '').toLowerCase().trim();
         return sName.includes(teamNameToMatch) || teamNameToMatch.includes(sName);
       });
-      if (match) return match;
+      if (nameMatch) return nameMatch;
+
+      // 3. Fallback to shared project-wide sprint (teams is empty / All Teams)
+      const sharedSprint = activeSprints.find((s: any) => !s.teams || s.teams.length === 0);
+      if (sharedSprint) return sharedSprint;
     }
     return activeSprints[0];
   }, [activeSprints, selectedTeamFilter]);
@@ -369,6 +548,35 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       });
     }
     return counts;
+  }, [data, selectedTeamFilter, selectedTeam]);
+
+  // List of all Main Tasks for Family Quick-Jumper
+  const mainTaskFamilies = React.useMemo(() => {
+    if (!data) return [];
+    const list: Task[] = [];
+    const seen = new Set<string>();
+    Object.values(data).forEach((taskList: any) => {
+      if (Array.isArray(taskList)) {
+        taskList.forEach((t: Task) => {
+          if (!seen.has(String(t._id))) {
+            seen.add(String(t._id));
+            if (selectedTeamFilter && selectedTeamFilter !== 'ALL') {
+              const taskTeam = (t.team || '').toLowerCase().trim();
+              const filterLower = selectedTeamFilter.toLowerCase().trim();
+              const teamKey = (selectedTeam?.key || '').toLowerCase().trim();
+              const matchesTeam =
+                taskTeam === filterLower ||
+                taskTeam.includes(filterLower) ||
+                filterLower.includes(taskTeam) ||
+                (teamKey && taskTeam === teamKey);
+              if (!matchesTeam) return;
+            }
+            list.push(t);
+          }
+        });
+      }
+    });
+    return list;
   }, [data, selectedTeamFilter, selectedTeam]);
 
   // Filter members belonging strictly to the active team and/or active sprint tasks
@@ -591,8 +799,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
   // Check if a user can drag/move a specific subtask across stages
   const canDragSubtask = (parentTask: Task, subtask: Subtask): boolean => {
-    // If subtask has microtasks, its stage is automated from its microtasks!
-    if (subtask.microtasks && subtask.microtasks.length > 0) return false;
+    // If subtask has minitasks, its stage is automated from its minitasks!
+    if ((subtask.minitasks && subtask.minitasks.length > 0) || (subtask.microtasks && subtask.microtasks.length > 0)) return false;
     if (isGuest) return false;
     if (isLevel1 || isLevel2) return true;
     const repId = (parentTask.reporterId?._id || parentTask.reporterId)?.toString();
@@ -609,8 +817,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     return false;
   };
 
-  // Check if a user can drag/move a specific microtask across stages
-  const canDragMicrotask = (parentTask: Task, subtask: Subtask, microtask: any): boolean => {
+  // Check if a user can drag/move a specific mini-task across stages (Level 3)
+  const canDragMinitask = (parentTask: Task, subtask: Subtask, minitask: any): boolean => {
+    // If minitask has microtasks, its stage is automated from its microtasks!
+    if (minitask.microtasks && minitask.microtasks.length > 0) return false;
     if (isGuest) return false;
     if (isLevel1 || isLevel2) return true;
     const repId = (parentTask.reporterId?._id || parentTask.reporterId)?.toString();
@@ -622,19 +832,41 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     if (isLevel4) {
       const parentAssigneeId = (parentTask.assigneeId?._id || parentTask.assigneeId)?.toString();
       const subAssigneeId = (subtask.assigneeId?._id || subtask.assigneeId)?.toString();
+      const miniAssigneeId = (minitask.assigneeId?._id || minitask.assigneeId)?.toString();
+      return miniAssigneeId === currentUserIdStr || subAssigneeId === currentUserIdStr || parentAssigneeId === currentUserIdStr;
+    }
+    return false;
+  };
+
+  // Check if a user can drag/move a specific micro-task across stages (Level 4)
+  const canDragMicrotask = (parentTask: Task, subtask: Subtask, minitask: any, microtask: any): boolean => {
+    if (isGuest) return false;
+    if (isLevel1 || isLevel2) return true;
+    const repId = (parentTask.reporterId?._id || parentTask.reporterId)?.toString();
+    if (repId && repId === currentUserIdStr) return true;
+    if (isLevel3) {
+      if (!parentTask.team) return true;
+      return userLeadTeamNames.has(parentTask.team.toLowerCase().trim()) || userLeadTeamNames.size > 0;
+    }
+    if (isLevel4) {
+      const parentAssigneeId = (parentTask.assigneeId?._id || parentTask.assigneeId)?.toString();
+      const subAssigneeId = (subtask.assigneeId?._id || subtask.assigneeId)?.toString();
+      const miniAssigneeId = (minitask.assigneeId?._id || minitask.assigneeId)?.toString();
       const micAssigneeId = (microtask.assigneeId?._id || microtask.assigneeId)?.toString();
-      return micAssigneeId === currentUserIdStr || subAssigneeId === currentUserIdStr || parentAssigneeId === currentUserIdStr;
+      return micAssigneeId === currentUserIdStr || miniAssigneeId === currentUserIdStr || subAssigneeId === currentUserIdStr || parentAssigneeId === currentUserIdStr;
     }
     return false;
   };
 
   const isAdminOrLead = isLevel1 || isLevel2 || isLevel3;
   const isManagement = isLevel1 || isLevel2;
+  const canImportExcel = isAdminOrLead; // 1st 3 levels only (Level 1: Admin, Level 2: PM, Level 3: Team Lead)
 
   // Task Soft Deletion State & Permissions
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
 
   const canDeleteTask = (task: Task): boolean => {
+    if (task.isLocked) return false;
     if (isGuest) return false;
     if (isLevel1 || isLevel2) return true;
     if (isLevel3) {
@@ -833,20 +1065,53 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
   });
 
-  // Toggle Microtask Stage Mutation directly from Kanban Card
+  // Toggle Mini-task Stage Mutation directly from Kanban Card (Level 3)
+  const toggleMinitaskStageMutation = useMutation({
+    mutationFn: async ({
+      taskId,
+      subtaskId,
+      minitaskId,
+      status
+    }: {
+      taskId: string;
+      subtaskId: string;
+      minitaskId: string;
+      status: string;
+    }) => {
+      const res = await api.patch(
+        `/tasks/${taskId}/subtasks/${subtaskId}/minitasks/${minitaskId}`,
+        { status }
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
+    },
+    onError: (err: any) => {
+      alert(err.response?.data?.error || 'Failed to update mini-task');
+    }
+  });
+
+  // Toggle Microtask Stage Mutation directly from Kanban Card (Level 4)
   const toggleMicrotaskStageMutation = useMutation({
     mutationFn: async ({
       taskId,
       subtaskId,
+      minitaskId,
       microtaskId,
       status
     }: {
       taskId: string;
       subtaskId: string;
+      minitaskId: string;
       microtaskId: string;
       status: string;
     }) => {
-      const res = await api.patch(`/tasks/${taskId}/subtasks/${subtaskId}/microtasks/${microtaskId}`, { status });
+      const res = await api.patch(
+        `/tasks/${taskId}/subtasks/${subtaskId}/minitasks/${minitaskId}/microtasks/${microtaskId}`,
+        { status }
+      );
       return res.data;
     },
     onSuccess: () => {
@@ -957,6 +1222,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         goal: newSprintGoal,
         startDate: newSprintStartDate || undefined,
         endDate: newSprintEndDate || undefined,
+        teams: newSprintTeams,
         status: 'PLANNED'
       });
       return res.data;
@@ -968,6 +1234,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       setNewSprintGoal('');
       setNewSprintStartDate('');
       setNewSprintEndDate('');
+      setNewSprintTeams([]);
       if (data?.data?._id) {
         setSelectedSprintId(data.data._id);
       }
@@ -986,7 +1253,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         goal: editSprintGoal,
         startDate: editSprintStartDate || undefined,
         endDate: editSprintEndDate || undefined,
-        reason: editSprintReason || undefined
+        reason: editSprintReason || undefined,
+        teams: editSprintTeams
       });
       return res.data;
     },
@@ -1095,7 +1363,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     }
   });
 
-  const handleDragStart = (e: React.DragEvent, taskId: string, subtaskId?: string, microtaskId?: string) => {
+  const handleDragStart = (e: React.DragEvent, taskId: string, subtaskId?: string, minitaskId?: string, microtaskId?: string) => {
     e.dataTransfer.setData('taskId', taskId);
     setDraggedTaskId(taskId);
     if (subtaskId) {
@@ -1104,6 +1372,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     } else {
       e.dataTransfer.setData('subtaskId', '');
       setDraggedSubtaskId(null);
+    }
+    if (minitaskId) {
+      e.dataTransfer.setData('minitaskId', minitaskId);
+    } else {
+      e.dataTransfer.setData('minitaskId', '');
     }
     if (microtaskId) {
       e.dataTransfer.setData('microtaskId', microtaskId);
@@ -1120,13 +1393,27 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     e.preventDefault();
     const taskId = e.dataTransfer.getData('taskId') || draggedTaskId;
     const subtaskId = e.dataTransfer.getData('subtaskId') || draggedSubtaskId;
+    const minitaskId = e.dataTransfer.getData('minitaskId');
     const microtaskId = e.dataTransfer.getData('microtaskId');
 
-    if (microtaskId && subtaskId && taskId) {
+    if (microtaskId && minitaskId && subtaskId && taskId) {
       toggleMicrotaskStageMutation.mutate({
         taskId,
         subtaskId,
+        minitaskId,
         microtaskId,
+        status: targetStatus
+      });
+      setDraggedTaskId(null);
+      setDraggedSubtaskId(null);
+      return;
+    }
+
+    if (minitaskId && subtaskId && taskId) {
+      toggleMinitaskStageMutation.mutate({
+        taskId,
+        subtaskId,
+        minitaskId,
         status: targetStatus
       });
       setDraggedTaskId(null);
@@ -1525,16 +1812,18 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             </button>
           )}
 
-          {/* Excel Project Plan Upload Button on Board Page */}
-          <button
-            onClick={() => setIsExcelImportOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer active:scale-[0.98]"
-            title="Import Project Plan / Tasks from Excel"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
-            <span className="hidden sm:inline">Import Excel</span>
-            <span className="sm:hidden">Import</span>
-          </button>
+          {/* Excel Project Plan Upload Button on Board Page - 1st 3 Levels Only (Admins, PMs, Team Leads) */}
+          {canImportExcel && (
+            <button
+              onClick={() => setIsExcelImportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer active:scale-[0.98]"
+              title="Import Project Plan / Tasks from Excel (Admins, PMs, Team Leads only)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
+              <span className="hidden sm:inline">Import Excel</span>
+              <span className="sm:hidden">Import</span>
+            </button>
+          )}
 
           {/* Excel Project Plan Export Button on Board Page */}
           <button
@@ -1584,6 +1873,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         : ''
                     );
                     setEditSprintReason('');
+                    setEditSprintTeams(currentSprint.teams || []);
                     setIsEditSprintModalOpen(true);
                   }}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all ${
@@ -1595,7 +1885,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
                       : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
                   }`}
-                  title={canManageSprint ? "Click to edit dates or extend sprint" : undefined}
+                  title={canManageSprint ? "Click to edit dates, teams or extend sprint" : undefined}
                 >
                   <Clock className="w-3.5 h-3.5" />
                   <span>
@@ -1609,6 +1899,13 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   </span>
                   {canManageSprint && <Edit2 className="w-3 h-3 opacity-60 ml-0.5" />}
                 </button>
+
+                {/* Team Tag for Current Sprint */}
+                <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 shadow-2xs">
+                  {currentSprint.teams && currentSprint.teams.length > 0
+                    ? `👥 ${currentSprint.teams.join(', ')}`
+                    : '🌐 All Teams'}
+                </span>
 
                 {/* Sprint History Button */}
                 {currentSprint.history && currentSprint.history.length > 0 && (
@@ -1630,11 +1927,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             className="text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-800 outline-none focus:border-blue-500 cursor-pointer shadow-2xs transition-colors"
           >
             <option value="ALL">All Sprints</option>
-            {sprints.map((s: any) => (
-              <option key={s._id} value={s._id}>
-                {s.name} {s.status === 'ACTIVE' ? '(Active)' : `• [${s.status}]`}
-              </option>
-            ))}
+            {sprints.map((s: any) => {
+              const sprintTeamsStr = s.teams && s.teams.length > 0 ? s.teams.join(', ') : 'All Teams';
+              return (
+                <option key={s._id} value={s._id}>
+                  {s.name} {s.status === 'ACTIVE' ? '(Active)' : `• [${s.status}]`} — [{sprintTeamsStr}]
+                </option>
+              );
+            })}
           </select>
 
           {canManageSprint && currentSprint && currentSprint.status === 'ACTIVE' && (
@@ -1655,6 +1955,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 setNewSprintEndDate(twoWeeks.toISOString().split('T')[0]);
                 setNewSprintName(`Sprint ${sprints.length + 1}`);
                 setNewSprintGoal('');
+                if (selectedTeamFilter && selectedTeamFilter !== 'ALL') {
+                  setNewSprintTeams([selectedTeamFilter]);
+                } else {
+                  setNewSprintTeams([]);
+                }
                 setIsNewSprintModalOpen(true);
               }}
               className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition-colors cursor-pointer"
@@ -1665,6 +1970,115 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Family Quick Jumper Bar & Active Focus Banner */}
+      {mainTaskFamilies.length > 0 && (
+        <div className="flex flex-col gap-1.5 px-1 pb-2 shrink-0">
+          {/* Active Focus Notification Banner */}
+          {focusedFamilyKey && (() => {
+            const focusedTask = mainTaskFamilies.find(t => t.key === focusedFamilyKey || String(t._id) === focusedFamilyKey);
+            const theme = getMainTaskFamilyTheme(focusedTask, mainTaskFamilies);
+            return (
+              <div
+                className="flex items-center justify-between px-3 py-1.5 rounded-lg border text-xs shadow-xs transition-all"
+                style={{
+                  backgroundColor: theme.subtleBg,
+                  borderColor: theme.accentColor
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: theme.accentColor }} />
+                    <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: theme.accentColor }} />
+                  </span>
+                  <span className="font-bold" style={{ color: theme.badgeText }}>
+                    Focused Family: {focusedTask?.key || focusedFamilyKey}
+                  </span>
+                  <span className="text-slate-600 truncate max-w-[300px] md:max-w-[500px]">
+                    {focusedTask?.title}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFocusedFamilyKey(null)}
+                  className="px-2 py-0.5 rounded text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 shadow-2xs flex items-center gap-1 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Show All Families</span>
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Quick Jumper Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto py-1 dark-scrollbar text-xs">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0 flex items-center gap-1 mr-1">
+              <Layers className="w-3.5 h-3.5 text-slate-400" />
+              <span>Families ({mainTaskFamilies.length}):</span>
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setFocusedFamilyKey(null)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+                !focusedFamilyKey
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+              }`}
+            >
+              All
+            </button>
+
+            {mainTaskFamilies.map((mt, idx) => {
+              const fTheme = getMainTaskFamilyTheme(mt, mainTaskFamilies);
+              const keyVal = mt.key || String(mt._id);
+              const isFocused = focusedFamilyKey === keyVal;
+              const isHovered = hoveredFamilyKey === keyVal;
+              const subtaskCount = Array.isArray(mt.subtasks) ? mt.subtasks.length : 0;
+
+              return (
+                <button
+                  key={mt._id}
+                  type="button"
+                  onClick={() => setFocusedFamilyKey(isFocused ? null : keyVal)}
+                  onMouseEnter={() => setHoveredFamilyKey(keyVal)}
+                  onMouseLeave={() => setHoveredFamilyKey(null)}
+                  title={`${mt.key}: ${mt.title} (${subtaskCount} subtasks)`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold transition-all shrink-0 cursor-pointer border ${
+                    isFocused
+                      ? 'shadow-xs ring-2 ring-offset-1'
+                      : isHovered
+                      ? 'shadow-xs scale-105'
+                      : 'opacity-90 hover:opacity-100'
+                  }`}
+                  style={{
+                    backgroundColor: isFocused ? fTheme.accentColor : fTheme.badgeBg,
+                    color: isFocused ? '#FFFFFF' : fTheme.badgeText,
+                    borderColor: fTheme.badgeBorder
+                  }}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: isFocused ? '#FFFFFF' : fTheme.accentColor }}
+                  />
+                  <span>{mt.key || `Task ${idx + 1}`}</span>
+                  {subtaskCount > 0 && (
+                    <span
+                      className="text-[9px] px-1 py-0.2 rounded-full font-bold"
+                      style={{
+                        backgroundColor: isFocused ? 'rgba(255,255,255,0.25)' : fTheme.subtleBorder,
+                        color: isFocused ? '#FFFFFF' : fTheme.badgeText
+                      }}
+                    >
+                      {subtaskCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Horizontal Scrollable Columns Container */}
       <div
@@ -1733,17 +2147,18 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               }
             });
 
-            // 3. Microtasks belonging to this column stage (outside subtask)
-            let colMicrotasks: { parent: Task; subtask: Subtask; microtask: any }[] = [];
+            // 3. Mini-tasks (Level 3) belonging to this column stage (under subtask)
+            let colMinitasks: { parent: Task; subtask: Subtask; minitask: any }[] = [];
             allTasksList.forEach((parent) => {
               if (!matchesTeamFilter(parent.team)) return;
               if (Array.isArray(parent.subtasks)) {
                 parent.subtasks.forEach((st) => {
-                  if (Array.isArray(st.microtasks)) {
-                    st.microtasks.forEach((mic: any) => {
-                      const micStatus = mic.status || (mic.isCompleted ? activeColumns[activeColumns.length - 1]?.id : activeColumns[0]?.id);
-                      if (matchesStage(micStatus, col.id, colIdx)) {
-                        colMicrotasks.push({ parent, subtask: st, microtask: mic });
+                  const minis = (st.minitasks && st.minitasks.length > 0) ? st.minitasks : (st.microtasks || []);
+                  if (Array.isArray(minis)) {
+                    minis.forEach((mini: any) => {
+                      const miniStatus = mini.status || (mini.isCompleted ? activeColumns[activeColumns.length - 1]?.id : activeColumns[0]?.id);
+                      if (matchesStage(miniStatus, col.id, colIdx)) {
+                        colMinitasks.push({ parent, subtask: st, minitask: mini });
                       }
                     });
                   }
@@ -1751,7 +2166,30 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               }
             });
 
-            // 4. Search query filter (Multi-term, case-insensitive substring matching across main tasks, subtasks & microtasks)
+            // 4. Micro-tasks (Level 4) belonging to this column stage (under minitask)
+            let colMicrotasks: { parent: Task; subtask: Subtask; minitask: any; microtask: any }[] = [];
+            allTasksList.forEach((parent) => {
+              if (!matchesTeamFilter(parent.team)) return;
+              if (Array.isArray(parent.subtasks)) {
+                parent.subtasks.forEach((st) => {
+                  const minis = (st.minitasks && st.minitasks.length > 0) ? st.minitasks : (st.microtasks || []);
+                  if (Array.isArray(minis)) {
+                    minis.forEach((mini: any) => {
+                      if (Array.isArray(mini.microtasks)) {
+                        mini.microtasks.forEach((mic: any) => {
+                          const micStatus = mic.status || (mic.isCompleted ? activeColumns[activeColumns.length - 1]?.id : activeColumns[0]?.id);
+                          if (matchesStage(micStatus, col.id, colIdx)) {
+                            colMicrotasks.push({ parent, subtask: st, minitask: mini, microtask: mic });
+                          }
+                        });
+                      }
+                    });
+                  }
+                });
+              }
+            });
+
+            // 4b. Search query filter (Multi-term, case-insensitive substring matching across main tasks, subtasks, mini-tasks & micro-tasks)
             const query = (localSearch || searchQuery).trim().toLowerCase();
             if (query) {
               const queryTerms = query.split(/\s+/).filter(Boolean);
@@ -1774,13 +2212,21 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     st.status || '',
                     st.assigneeId?.name || '',
                     st.assigneeId?.email || '',
-                    ...(st.microtasks || []).flatMap((m: any) => [
-                      m.title || '',
-                      m.key || '',
-                      m.description || '',
-                      m.status || '',
-                      m.assigneeId?.name || '',
-                      m.assigneeId?.email || ''
+                    ...((st.minitasks && st.minitasks.length > 0 ? st.minitasks : st.microtasks) || []).flatMap((min: any) => [
+                      min.title || '',
+                      min.key || '',
+                      min.description || '',
+                      min.status || '',
+                      min.assigneeId?.name || '',
+                      min.assigneeId?.email || '',
+                      ...(min.microtasks || []).flatMap((mic: any) => [
+                        mic.title || '',
+                        mic.key || '',
+                        mic.description || '',
+                        mic.status || '',
+                        mic.assigneeId?.name || '',
+                        mic.assigneeId?.email || ''
+                      ])
                     ])
                   ])
                 ].join(' ').toLowerCase();
@@ -1801,20 +2247,57 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   parent.description || '',
                   (parent as any).team || '',
                   ...(parent.labels || []),
-                  ...(subtask.microtasks || []).flatMap((m: any) => [
-                    m.title || '',
-                    m.key || '',
-                    m.description || '',
-                    m.status || '',
-                    m.assigneeId?.name || '',
-                    m.assigneeId?.email || ''
+                  ...((subtask.minitasks && subtask.minitasks.length > 0 ? subtask.minitasks : subtask.microtasks) || []).flatMap((min: any) => [
+                    min.title || '',
+                    min.key || '',
+                    min.description || '',
+                    min.status || '',
+                    min.assigneeId?.name || '',
+                    min.assigneeId?.email || '',
+                    ...(min.microtasks || []).flatMap((mic: any) => [
+                      mic.title || '',
+                      mic.key || '',
+                      mic.description || '',
+                      mic.status || '',
+                      mic.assigneeId?.name || '',
+                      mic.assigneeId?.email || ''
+                    ])
                   ])
                 ].join(' ').toLowerCase();
 
                 return queryTerms.every((term) => searchBlob.includes(term));
               });
 
-              colMicrotasks = colMicrotasks.filter(({ parent, subtask, microtask }) => {
+              colMinitasks = colMinitasks.filter(({ parent, subtask, minitask }) => {
+                const searchBlob = [
+                  minitask.title || '',
+                  minitask.key || '',
+                  minitask.description || '',
+                  minitask.status || '',
+                  minitask.assigneeId?.name || '',
+                  minitask.assigneeId?.email || '',
+                  subtask.title || '',
+                  subtask.key || '',
+                  subtask.description || '',
+                  parent.title || '',
+                  parent.key || '',
+                  parent.description || '',
+                  (parent as any).team || '',
+                  ...(parent.labels || []),
+                  ...(minitask.microtasks || []).flatMap((mic: any) => [
+                    mic.title || '',
+                    mic.key || '',
+                    mic.description || '',
+                    mic.status || '',
+                    mic.assigneeId?.name || '',
+                    mic.assigneeId?.email || ''
+                  ])
+                ].join(' ').toLowerCase();
+
+                return queryTerms.every((term) => searchBlob.includes(term));
+              });
+
+              colMicrotasks = colMicrotasks.filter(({ parent, subtask, minitask, microtask }) => {
                 const searchBlob = [
                   microtask.title || '',
                   microtask.key || '',
@@ -1822,12 +2305,12 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   microtask.status || '',
                   microtask.assigneeId?.name || '',
                   microtask.assigneeId?.email || '',
+                  minitask.title || '',
+                  minitask.key || '',
                   subtask.title || '',
                   subtask.key || '',
-                  subtask.description || '',
                   parent.title || '',
                   parent.key || '',
-                  parent.description || '',
                   (parent as any).team || '',
                   ...(parent.labels || [])
                 ].join(' ').toLowerCase();
@@ -1853,9 +2336,120 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   microtask.assigneeId?._id === selectedAssigneeFilter ||
                   microtask.assigneeId === selectedAssigneeFilter
               );
+              colMinitasks = colMinitasks.filter(
+                ({ minitask }) =>
+                  minitask.assigneeId?._id === selectedAssigneeFilter ||
+                  minitask.assigneeId === selectedAssigneeFilter
+              );
             }
 
-            const totalColItems = colMainTasks.length + colSubtasks.length + colMicrotasks.length;
+            // Assemble strict hierarchical tree order:
+            // 1st Main Task -> related Subtask 1 -> related Mini-tasks -> related Micro-tasks -> related Subtask 2 ...
+            // 2nd Main Task -> ...
+            type UnifiedColItem =
+              | { type: 'MAIN'; task: Task }
+              | { type: 'SUBTASK'; parent: Task; subtask: Subtask }
+              | { type: 'MINITASK'; parent: Task; subtask: Subtask; minitask: any }
+              | { type: 'MICROTASK'; parent: Task; subtask: Subtask; minitask: any; microtask: any };
+
+            const colUnifiedItems: UnifiedColItem[] = [];
+            const validMainTaskIds = new Set(colMainTasks.map((t) => String(t._id)));
+            const validSubtaskMap = new Map<string, { parent: Task; subtask: Subtask }>();
+            colSubtasks.forEach((item) => validSubtaskMap.set(String(item.subtask._id), item));
+
+            const validMinitaskMap = new Map<string, { parent: Task; subtask: Subtask; minitask: any }>();
+            colMinitasks.forEach((item) => validMinitaskMap.set(String(item.minitask._id), item));
+
+            const validMicrotaskMap = new Map<string, { parent: Task; subtask: Subtask; minitask: any; microtask: any }>();
+            colMicrotasks.forEach((item) => validMicrotaskMap.set(String(item.microtask._id), item));
+
+            const processedSubtaskIds = new Set<string>();
+            const processedMinitaskIds = new Set<string>();
+            const processedMicrotaskIds = new Set<string>();
+
+            const parentsToIterate = focusedFamilyKey
+              ? allTasksList.filter((p) => p.key === focusedFamilyKey || String(p._id) === focusedFamilyKey)
+              : allTasksList;
+
+            parentsToIterate.forEach((parent) => {
+              // 1. If this Main Task belongs to this column, add it
+              if (validMainTaskIds.has(String(parent._id))) {
+                colUnifiedItems.push({ type: 'MAIN', task: parent });
+              }
+
+              // 2. Iterate through subtasks under this parent
+              if (Array.isArray(parent.subtasks)) {
+                parent.subtasks.forEach((st) => {
+                  const subItem = validSubtaskMap.get(String(st._id));
+                  if (subItem) {
+                    colUnifiedItems.push({ type: 'SUBTASK', parent: subItem.parent, subtask: subItem.subtask });
+                    processedSubtaskIds.add(String(st._id));
+                  }
+
+                  // 3. Mini-tasks belonging under this subtask
+                  const minis = (st.minitasks && st.minitasks.length > 0) ? st.minitasks : (st.microtasks || []);
+                  if (Array.isArray(minis)) {
+                    minis.forEach((mini: any) => {
+                      const miniItem = validMinitaskMap.get(String(mini._id));
+                      if (miniItem) {
+                        colUnifiedItems.push({
+                          type: 'MINITASK',
+                          parent: miniItem.parent,
+                          subtask: miniItem.subtask,
+                          minitask: miniItem.minitask
+                        });
+                        processedMinitaskIds.add(String(mini._id));
+                      }
+
+                      // 4. Micro-tasks belonging under this mini-task
+                      if (Array.isArray(mini.microtasks)) {
+                        mini.microtasks.forEach((mic: any) => {
+                          const microItem = validMicrotaskMap.get(String(mic._id));
+                          if (microItem) {
+                            colUnifiedItems.push({
+                              type: 'MICROTASK',
+                              parent: microItem.parent,
+                              subtask: microItem.subtask,
+                              minitask: microItem.minitask,
+                              microtask: microItem.microtask
+                            });
+                            processedMicrotaskIds.add(String(mic._id));
+                          }
+                        });
+                      }
+                    });
+                  }
+                });
+              }
+            });
+
+            // Fallback for any orphaned items
+            colSubtasks.forEach((s) => {
+              if (focusedFamilyKey && s.parent.key !== focusedFamilyKey && String(s.parent._id) !== focusedFamilyKey) return;
+              if (!processedSubtaskIds.has(String(s.subtask._id))) {
+                colUnifiedItems.push({ type: 'SUBTASK', parent: s.parent, subtask: s.subtask });
+              }
+            });
+            colMinitasks.forEach((m) => {
+              if (focusedFamilyKey && m.parent.key !== focusedFamilyKey && String(m.parent._id) !== focusedFamilyKey) return;
+              if (!processedMinitaskIds.has(String(m.minitask._id))) {
+                colUnifiedItems.push({ type: 'MINITASK', parent: m.parent, subtask: m.subtask, minitask: m.minitask });
+              }
+            });
+            colMicrotasks.forEach((mic) => {
+              if (focusedFamilyKey && mic.parent.key !== focusedFamilyKey && String(mic.parent._id) !== focusedFamilyKey) return;
+              if (!processedMicrotaskIds.has(String(mic.microtask._id))) {
+                colUnifiedItems.push({
+                  type: 'MICROTASK',
+                  parent: mic.parent,
+                  subtask: mic.subtask,
+                  minitask: mic.minitask,
+                  microtask: mic.microtask
+                });
+              }
+            });
+
+            const totalColItems = colUnifiedItems.length;
             const isMenuOpen = openColumnMenuId === col.id;
 
             return (
@@ -1934,7 +2528,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           )
                         }
                         className="p-1 hover:text-slate-800 hover:bg-slate-200/80 rounded-md transition-colors cursor-pointer"
-                        title="Add Issue"
+                        title="Add Task"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -2008,25 +2602,77 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
                 {/* Column Cards Container: Main Tasks + Draggable Subtasks Outside Main Task */}
                 <div className="p-2 flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 dark-scrollbar">
-                  {/* SECTION 1: MAIN TASKS IN THIS COLUMN */}
-                  {colMainTasks.map((task) => {
-                    const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
-                    const canDrag = canDragTask(task);
+                  {colUnifiedItems.map((item) => {
+                    const mainTask = item.type === 'MAIN' ? item.task : item.parent;
+                    const familyTheme = getMainTaskFamilyTheme(mainTask, allTasksList);
+                    const familyKey = mainTask.key || String(mainTask._id);
+                    const isFamilyHovered = hoveredFamilyKey !== null && hoveredFamilyKey === familyKey;
+                    const isFamilyDimmed = hoveredFamilyKey !== null && hoveredFamilyKey !== familyKey;
+                    const isFamilyFocused = focusedFamilyKey !== null && (focusedFamilyKey === familyKey || focusedFamilyKey === String(mainTask._id));
 
-                    return (
+                    const spotlightClass = isFamilyHovered
+                      ? 'ring-2 ring-offset-1 scale-[1.01] shadow-lg z-20'
+                      : isFamilyDimmed
+                      ? 'opacity-35 grayscale-[25%] transition-all duration-200'
+                      : isFamilyFocused
+                      ? 'ring-2 ring-offset-1 shadow-md'
+                      : 'hover:shadow-md hover:-translate-y-0.5';
+
+                    const familyPill = (
+                      <span
+                        className="text-[9px] font-black font-mono px-1.5 py-0.5 rounded border shadow-2xs shrink-0"
+                        style={{
+                          backgroundColor: familyTheme.subtleBg,
+                          color: familyTheme.badgeText,
+                          borderColor: familyTheme.badgeBorder
+                        }}
+                        title={`Family #${familyTheme.familyIndex + 1} (${mainTask.key || ''})`}
+                      >
+                        F#{familyTheme.familyIndex + 1}
+                      </span>
+                    );
+
+                    const focusBtn = (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedFamilyKey(focusedFamilyKey === familyKey ? null : familyKey);
+                        }}
+                        title={focusedFamilyKey === familyKey ? "Clear family focus (Show all tasks)" : `Focus only on ${familyKey} family`}
+                        className={`p-1 rounded transition-all cursor-pointer ${
+                          focusedFamilyKey === familyKey
+                            ? 'bg-blue-600 text-white shadow-xs opacity-100'
+                            : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                        }`}
+                      >
+                        <Focus className="w-3.5 h-3.5" />
+                      </button>
+                    );
+
+                    if (item.type === 'MAIN') {
+                      const task = item.task;
+                      const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
+                      const canDrag = canDragTask(task);
+
+                      return (
                       <div
                         key={task._id}
                         draggable={canDrag}
                         onDragStart={(e) => canDrag ? handleDragStart(e, task._id) : e.preventDefault()}
                         onClick={() => onSelectTask(task)}
-                        className={`bg-white hover:bg-white p-3 rounded-lg border ${
-                          hasSubtasks ? 'border-amber-200/90 shadow-xs' : 'border-[#DFE1E6]'
-                        } hover:border-[#4C9AFF] shadow-2xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 ${
+                        onMouseEnter={() => setHoveredFamilyKey(familyKey)}
+                        onMouseLeave={() => setHoveredFamilyKey(null)}
+                        className={`bg-white hover:bg-white p-3 rounded-lg border border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-0 ${spotlightClass} ${
                           canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-                        } group flex flex-col gap-2 relative text-slate-800`}
+                        } group flex flex-col gap-2 relative text-slate-800 border-l-[5px]`}
+                        style={{
+                          borderLeftColor: LEVEL_THEMES.MAIN.accentColor
+                        }}
                       >
-                        {/* Drag Grip Handle on hover & Quick Delete Button */}
+                        {/* Drag Grip Handle on hover, Quick Delete & Focus Button */}
                         <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+                          {focusBtn}
                           {canDeleteTask(task) && (
                             <button
                               type="button"
@@ -2045,38 +2691,33 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                               <GripVertical className="w-3.5 h-3.5" />
                             ) : (
                               <span title={hasSubtasks ? "Automated Stage: Main task stage updates automatically as its subtasks are dragged across columns" : "Stage change restricted"}>
-                                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                                <Lock className="w-3.5 h-3.5" style={{ color: LEVEL_THEMES.MAIN.accentColor }} />
                               </span>
                             )}
                           </div>
                         </div>
 
-                        {/* Top Badge: Main Task Indicator / Issue Type & Key */}
-                        <div className="flex items-center gap-1.5 flex-wrap pr-5">
-                          {hasSubtasks ? (
-                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1 shadow-2xs">
-                              <span>👑</span>
-                              <span>MAIN TASK</span>
-                            </span>
-                          ) : task.issueType === 'BUG' ? (
-                            <span className="text-[10px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200 flex items-center gap-1 shadow-2xs">
-                              <Bug className="w-2.5 h-2.5 stroke-[2.5]" />
-                              <span>BUG</span>
-                            </span>
-                          ) : task.issueType === 'STORY' ? (
-                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1 shadow-2xs">
-                              <BookmarkCheck className="w-2.5 h-2.5 stroke-[2.5]" />
-                              <span>STORY</span>
-                            </span>
-                          ) : task.issueType === 'EPIC' ? (
-                            <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200 flex items-center gap-1 shadow-2xs">
-                              <Layers className="w-2.5 h-2.5 stroke-[2.5]" />
-                              <span>EPIC</span>
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200 flex items-center gap-1 shadow-2xs">
-                              <CheckSquare className="w-2.5 h-2.5 stroke-[2.5]" />
-                              <span>TASK</span>
+                        {/* Top Badge: Main Task Indicator / Issue Type & Key & Family Tag & Lock */}
+                        <div className="flex items-center gap-1.5 flex-wrap pr-12">
+                          {familyPill}
+                          <span
+                            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-2xs"
+                            style={{
+                              backgroundColor: LEVEL_THEMES.MAIN.badgeBg,
+                              color: LEVEL_THEMES.MAIN.badgeText,
+                              borderColor: LEVEL_THEMES.MAIN.badgeBorder
+                            }}
+                          >
+                            <span>👑</span>
+                            <span>MAIN TASK</span>
+                          </span>
+                          {task.isLocked && (
+                            <span
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-rose-300 bg-rose-50 text-rose-700 flex items-center gap-1 shadow-2xs"
+                              title={`Locked by ${task.lockedBy?.name || 'Lead/Admin'}. Deletion is disabled.`}
+                            >
+                              <Lock className="w-2.5 h-2.5 text-rose-600" />
+                              <span>Locked</span>
                             </span>
                           )}
                           <span className="font-mono text-xs font-bold text-slate-700">
@@ -2123,22 +2764,31 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           const percent = Math.round((completedCount / totalCount) * 100);
 
                           return (
-                            <div className="bg-amber-50/50 rounded-lg p-2 border border-amber-200/60 flex flex-col gap-1.5 cursor-pointer">
-                              <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+                            <div
+                              className="rounded-lg p-2 border flex flex-col gap-1.5 cursor-pointer"
+                              style={{
+                                backgroundColor: familyTheme.subtleBg,
+                                borderColor: familyTheme.subtleBorder
+                              }}
+                            >
+                              <div className="flex items-center justify-between text-[11px] font-bold" style={{ color: familyTheme.badgeText }}>
                                 <span className="flex items-center gap-1">
-                                  <CheckSquare className="w-3 h-3 text-amber-700" />
+                                  <CheckSquare className="w-3 h-3" style={{ color: familyTheme.accentColor }} />
                                   <span>Subtasks Progress ({completedCount}/{totalCount})</span>
                                 </span>
-                                <span className={percent === 100 ? 'text-emerald-700 font-black' : 'text-amber-800'}>
+                                <span className={percent === 100 ? 'text-emerald-700 font-black' : ''} style={percent === 100 ? {} : { color: familyTheme.badgeText }}>
                                   {percent}%
                                 </span>
                               </div>
 
                               {/* Progress bar */}
-                              <div className="w-full h-1.5 bg-amber-200/60 rounded-full overflow-hidden">
+                              <div className="w-full h-1.5 bg-slate-200/80 rounded-full overflow-hidden">
                                 <div
-                                  className={`h-full transition-all duration-300 ${percent === 100 ? 'bg-emerald-500' : 'bg-amber-600'}`}
-                                  style={{ width: `${percent}%` }}
+                                  className={`h-full transition-all duration-300 ${percent === 100 ? 'bg-emerald-500' : ''}`}
+                                  style={{
+                                    width: `${percent}%`,
+                                    backgroundColor: percent === 100 ? undefined : familyTheme.accentColor
+                                  }}
                                 />
                               </div>
 
@@ -2174,9 +2824,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             {task.assigneeId ? (
                               <div
                                 title={`Assigned to ${task.assigneeId.name}`}
-                                className="w-6 h-6 rounded-full bg-[#0052CC] text-white flex items-center justify-center font-bold text-xs uppercase shadow-2xs"
+                                className="flex items-center gap-1.5 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-full shadow-2xs max-w-[130px]"
                               >
-                                {task.assigneeId.name.charAt(0)}
+                                <div className="w-4 h-4 rounded-full bg-[#0052CC] text-white flex items-center justify-center font-bold text-[9px] uppercase shrink-0">
+                                  {task.assigneeId.name.charAt(0)}
+                                </div>
+                                <span className="text-[10px] font-semibold text-blue-900 truncate">
+                                  {task.assigneeId.name}
+                                </span>
                               </div>
                             ) : (
                               <div
@@ -2190,38 +2845,53 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         </div>
                       </div>
                     );
-                  })}
+                    }
 
-                  {/* SECTION 2: SUBTASKS DISPLAYED OUTSIDE MAIN TASK AS DRAGGABLE CARDS */}
-                  {colSubtasks.map(({ parent, subtask: st }) => {
-                    const hasMicrotasks = Array.isArray(st.microtasks) && st.microtasks.length > 0;
-                    const canDrag = canDragSubtask(parent, st);
+                    if (item.type === 'SUBTASK') {
+                      const { parent, subtask: st } = item;
+                      const hasMicrotasks = Array.isArray(st.microtasks) && st.microtasks.length > 0;
+                      const canDrag = canDragSubtask(parent, st);
 
-                    return (
+                      return (
                       <div
                         key={`${parent._id}-${st._id}`}
                         draggable={canDrag}
                         onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id) : e.preventDefault()}
                         onClick={() => onSelectTask(parent, { targetSubtaskId: st._id })}
-                        className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-l-indigo-600 border-t border-r border-b border-[#DFE1E6] hover:border-indigo-400 shadow-2xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 ${
+                        onMouseEnter={() => setHoveredFamilyKey(familyKey)}
+                        onMouseLeave={() => setHoveredFamilyKey(null)}
+                        title={`Subtask of ${parent.key}: ${parent.title}`}
+                        className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-3.5 ${spotlightClass} ${
                           canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                         } group flex flex-col gap-2 relative text-slate-800`}
+                        style={{ borderLeftColor: LEVEL_THEMES.SUBTASK.accentColor }}
                       >
-                        {/* Drag Handle on hover */}
-                        <div className="absolute top-2.5 right-2.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-400 pointer-events-none">
-                          {canDrag ? (
-                            <GripVertical className="w-3.5 h-3.5" />
-                          ) : (
-                            <span title={hasMicrotasks ? "Automated Stage: Subtask stage updates automatically as its microtasks are dragged across columns" : "Stage change restricted"}>
-                              <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                            </span>
-                          )}
+                        {/* Drag Handle on hover & Focus Button */}
+                        <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+                          {focusBtn}
+                          <div className="opacity-40 group-hover:opacity-100 transition-opacity text-slate-400 pointer-events-none">
+                            {canDrag ? (
+                              <GripVertical className="w-3.5 h-3.5" />
+                            ) : (
+                              <span title={hasMicrotasks ? "Automated Stage: Subtask stage updates automatically as its microtasks are dragged across columns" : "Stage change restricted"}>
+                                <Lock className="w-3.5 h-3.5" style={{ color: LEVEL_THEMES.SUBTASK.accentColor }} />
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Subtask Badge & Key */}
-                        <div className="flex items-center gap-1.5 flex-wrap pr-5">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 flex items-center gap-1 shadow-2xs">
-                            <Sparkles className="w-2.5 h-2.5 text-indigo-600" />
+                        {/* Subtask Badge & Key & Family Tag */}
+                        <div className="flex items-center gap-1.5 flex-wrap pr-10">
+                          {familyPill}
+                          <span
+                            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-2xs"
+                            style={{
+                              backgroundColor: LEVEL_THEMES.SUBTASK.badgeBg,
+                              color: LEVEL_THEMES.SUBTASK.badgeText,
+                              borderColor: LEVEL_THEMES.SUBTASK.badgeBorder
+                            }}
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-sky-600" />
                             <span>SUBTASK</span>
                           </span>
                           {st.key && (
@@ -2231,33 +2901,31 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           )}
                         </div>
 
-                        {/* Parent Main Task Link Context Pill */}
-                        <div
-                          title={`Part of Main Task: ${parent.key} - ${parent.title}`}
-                          className="text-[11px] font-medium text-slate-600 flex items-center gap-1 truncate bg-slate-50 px-2 py-1 rounded border border-slate-200/80"
-                        >
-                          <CornerDownRight className="w-3 h-3 text-indigo-500 shrink-0" />
-                          <span className="font-bold text-slate-800 shrink-0">↳ Main {parent.key}:</span>
-                          <span className="truncate text-slate-600">{parent.title}</span>
-                        </div>
-
                         {/* Subtask Title */}
                         <h5 className="text-xs font-bold text-slate-900 line-clamp-2 leading-snug">
                           {st.title}
                         </h5>
 
-                        {/* Subtask Microtasks Progress Pill */}
-                        {st.microtasks && st.microtasks.length > 0 && (() => {
-                          const micDone = st.microtasks.filter((m: any) => m.isCompleted || m.status === 'DONE').length;
-                          const micTotal = st.microtasks.length;
-                          const micPct = Math.round((micDone / micTotal) * 100);
+                        {/* Subtask Mini-tasks Progress Pill */}
+                        {(() => {
+                          const minis = (st.minitasks && st.minitasks.length > 0) ? st.minitasks : (st.microtasks || []);
+                          if (!minis || minis.length === 0) return null;
+                          const miniDone = minis.filter((m: any) => m.isCompleted || m.status === 'DONE').length;
+                          const miniTotal = minis.length;
+                          const miniPct = Math.round((miniDone / miniTotal) * 100);
                           return (
-                            <div className="bg-purple-50/70 rounded px-2 py-1 border border-purple-200/70 flex items-center justify-between text-[10px]">
-                              <span className="font-bold text-purple-900 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                                <span>Microtasks ({micDone}/{micTotal})</span>
+                            <div
+                              className="rounded px-2 py-1 border flex items-center justify-between text-[10px]"
+                              style={{
+                                backgroundColor: LEVEL_THEMES.MINITASK.badgeBg,
+                                borderColor: LEVEL_THEMES.MINITASK.badgeBorder
+                              }}
+                            >
+                              <span className="font-bold flex items-center gap-1" style={{ color: LEVEL_THEMES.MINITASK.badgeText }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: LEVEL_THEMES.MINITASK.accentColor }} />
+                                <span>Mini-tasks ({miniDone}/{miniTotal})</span>
                               </span>
-                              <span className="font-extrabold text-purple-700">{micPct}%</span>
+                              <span className="font-extrabold" style={{ color: LEVEL_THEMES.MINITASK.accentColor }}>{miniPct}%</span>
                             </div>
                           );
                         })()}
@@ -2265,7 +2933,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {/* Subtask Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
                         <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded-md border border-indigo-200">
+                            <span
+                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                              style={{
+                                backgroundColor: LEVEL_THEMES.SUBTASK.badgeBg,
+                                color: LEVEL_THEMES.SUBTASK.badgeText,
+                                borderColor: LEVEL_THEMES.SUBTASK.badgeBorder
+                              }}
+                            >
                               {col.label}
                             </span>
                             {st.dueDate && (
@@ -2283,9 +2958,17 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             {st.assigneeId ? (
                               <div
                                 title={`Assigned to ${st.assigneeId.name || 'Member'}`}
-                                className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px] uppercase shadow-2xs"
+                                className="flex items-center gap-1 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-full shadow-2xs max-w-[130px]"
                               >
-                                {(st.assigneeId.name || 'M').charAt(0)}
+                                <div
+                                  className="w-4 h-4 rounded-full text-white flex items-center justify-center font-bold text-[9px] uppercase shrink-0"
+                                  style={{ backgroundColor: LEVEL_THEMES.SUBTASK.accentColor }}
+                                >
+                                  {(st.assigneeId.name || 'M').charAt(0)}
+                                </div>
+                                <span className="text-[10px] font-semibold text-slate-800 truncate">
+                                  {st.assigneeId.name}
+                                </span>
                               </div>
                             ) : (
                               <div
@@ -2299,35 +2982,185 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         </div>
                       </div>
                     );
-                  })}
+                    }
 
-                  {/* SECTION 3: MICROTASKS DISPLAYED AS DRAGGABLE CARDS */}
-                  {colMicrotasks.map(({ parent, subtask: st, microtask: mic }) => {
-                    const canDrag = canDragMicrotask(parent, st, mic);
+                    if (item.type === 'MINITASK') {
+                      const { parent, subtask: st, minitask: mini } = item;
+                      const hasMicrotasks = Array.isArray(mini.microtasks) && mini.microtasks.length > 0;
+                      const canDrag = canDragMinitask(parent, st, mini);
 
-                    return (
+                      return (
                       <div
-                        key={`${parent._id}-${st._id}-${mic._id}`}
+                        key={`${parent._id}-${st._id}-${mini._id}`}
                         draggable={canDrag}
-                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mic._id) : e.preventDefault()}
-                        onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMicrotaskId: mic._id })}
-                        className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-l-purple-600 border-t border-r border-b border-[#DFE1E6] hover:border-purple-400 shadow-2xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 ${
+                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mini._id) : e.preventDefault()}
+                        onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMinitaskId: mini._id })}
+                        onMouseEnter={() => setHoveredFamilyKey(familyKey)}
+                        onMouseLeave={() => setHoveredFamilyKey(null)}
+                        title={`Mini-task of ${parent.key} > ${st.key ? st.key + ': ' : ''}${st.title}`}
+                        className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-7 ${spotlightClass} ${
                           canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                         } group flex flex-col gap-2 relative text-slate-800`}
+                        style={{ borderLeftColor: LEVEL_THEMES.MINITASK.accentColor }}
                       >
-                        {/* Drag Handle on hover */}
-                        <div className="absolute top-2.5 right-2.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-400 pointer-events-none">
-                          {canDrag ? (
-                            <GripVertical className="w-3.5 h-3.5" />
-                          ) : (
-                            <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        {/* Drag Handle on hover & Focus Button */}
+                        <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+                          {focusBtn}
+                          <div className="opacity-40 group-hover:opacity-100 transition-opacity text-slate-400 pointer-events-none">
+                            {canDrag ? (
+                              <GripVertical className="w-3.5 h-3.5" />
+                            ) : (
+                              <span title={hasMicrotasks ? "Automated Stage: Mini-task stage updates automatically as its micro-tasks are dragged across columns" : "Stage change restricted"}>
+                                <Lock className="w-3.5 h-3.5" style={{ color: LEVEL_THEMES.MINITASK.accentColor }} />
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Mini-task Badge & Key & Family Tag */}
+                        <div className="flex items-center gap-1.5 flex-wrap pr-10">
+                          {familyPill}
+                          <span
+                            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-2xs"
+                            style={{
+                              backgroundColor: LEVEL_THEMES.MINITASK.badgeBg,
+                              color: LEVEL_THEMES.MINITASK.badgeText,
+                              borderColor: LEVEL_THEMES.MINITASK.badgeBorder
+                            }}
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-amber-600" />
+                            <span>MINI-TASK</span>
+                          </span>
+                          {mini.key && (
+                            <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              {mini.key}
+                            </span>
                           )}
                         </div>
 
-                        {/* Microtask Badge & Key */}
-                        <div className="flex items-center gap-1.5 flex-wrap pr-5">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200 flex items-center gap-1 shadow-2xs">
-                            <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
+                        {/* Mini-task Title */}
+                        <h5 className="text-xs font-bold text-slate-900 line-clamp-2 leading-snug">
+                          {mini.title}
+                        </h5>
+
+                        {/* Mini-task Micro-tasks Progress Pill */}
+                        {hasMicrotasks && (() => {
+                          const micDone = mini.microtasks.filter((m: any) => m.isCompleted || m.status === 'DONE').length;
+                          const micTotal = mini.microtasks.length;
+                          const micPct = Math.round((micDone / micTotal) * 100);
+                          return (
+                            <div
+                              className="rounded px-2 py-1 border flex items-center justify-between text-[10px]"
+                              style={{
+                                backgroundColor: LEVEL_THEMES.MICROTASK.badgeBg,
+                                borderColor: LEVEL_THEMES.MICROTASK.badgeBorder
+                              }}
+                            >
+                              <span className="font-bold flex items-center gap-1" style={{ color: LEVEL_THEMES.MICROTASK.badgeText }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: LEVEL_THEMES.MICROTASK.accentColor }} />
+                                <span>Micro-tasks ({micDone}/{micTotal})</span>
+                              </span>
+                              <span className="font-extrabold" style={{ color: LEVEL_THEMES.MICROTASK.accentColor }}>{micPct}%</span>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Mini-task Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
+                        <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                              style={{
+                                backgroundColor: LEVEL_THEMES.MINITASK.badgeBg,
+                                color: LEVEL_THEMES.MINITASK.badgeText,
+                                borderColor: LEVEL_THEMES.MINITASK.badgeBorder
+                              }}
+                            >
+                              {col.label}
+                            </span>
+                            {mini.dueDate && (
+                              <span
+                                title={`Due Date: ${new Date(mini.dueDate).toLocaleDateString()}`}
+                                className="text-[10px] font-medium text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded flex items-center gap-1 border border-slate-200"
+                              >
+                                <Calendar className="w-2.5 h-2.5 text-slate-400" />
+                                <span>{new Date(mini.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            {mini.assigneeId ? (
+                              <div
+                                title={`Assigned to ${mini.assigneeId.name || 'Member'}`}
+                                className="flex items-center gap-1 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-full shadow-2xs max-w-[130px]"
+                              >
+                                <div
+                                  className="w-4 h-4 rounded-full text-white flex items-center justify-center font-bold text-[9px] uppercase shrink-0"
+                                  style={{ backgroundColor: LEVEL_THEMES.MINITASK.accentColor }}
+                                >
+                                  {(mini.assigneeId.name || 'M').charAt(0)}
+                                </div>
+                                <span className="text-[10px] font-semibold text-slate-800 truncate">
+                                  {mini.assigneeId.name}
+                                </span>
+                              </div>
+                            ) : (
+                              <div
+                                title="Unassigned"
+                                className="w-5 h-5 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-[10px]"
+                              >
+                                <UserIcon className="w-3 h-3" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                    }
+
+                    if (item.type === 'MICROTASK') {
+                      const { parent, subtask: st, minitask: mini, microtask: mic } = item;
+                      const canDrag = canDragMicrotask(parent, st, mini, mic);
+
+                      return (
+                      <div
+                        key={`${parent._id}-${st._id}-${mini._id}-${mic._id}`}
+                        draggable={canDrag}
+                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mini._id, mic._id) : e.preventDefault()}
+                        onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMinitaskId: mini._id, targetMicrotaskId: mic._id })}
+                        onMouseEnter={() => setHoveredFamilyKey(familyKey)}
+                        onMouseLeave={() => setHoveredFamilyKey(null)}
+                        title={`Micro-task of ${parent.key} > ${st.title} > ${mini.title}`}
+                        className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-10 ${spotlightClass} ${
+                          canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                        } group flex flex-col gap-2 relative text-slate-800`}
+                        style={{ borderLeftColor: LEVEL_THEMES.MICROTASK.accentColor }}
+                      >
+                        {/* Drag Handle on hover & Focus Button */}
+                        <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+                          {focusBtn}
+                          <div className="opacity-40 group-hover:opacity-100 transition-opacity text-slate-400 pointer-events-none">
+                            {canDrag ? (
+                              <GripVertical className="w-3.5 h-3.5" />
+                            ) : (
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Microtask Badge & Key & Family Tag */}
+                        <div className="flex items-center gap-1.5 flex-wrap pr-10">
+                          {familyPill}
+                          <span
+                            className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-2xs"
+                            style={{
+                              backgroundColor: LEVEL_THEMES.MICROTASK.badgeBg,
+                              color: LEVEL_THEMES.MICROTASK.badgeText,
+                              borderColor: LEVEL_THEMES.MICROTASK.badgeBorder
+                            }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
                             <span>MICRO-TASK</span>
                           </span>
                           {mic.key && (
@@ -2335,17 +3168,6 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                               {mic.key}
                             </span>
                           )}
-                        </div>
-
-                        {/* Parent Subtask & Main Task Breadcrumb Pill */}
-                        <div
-                          title={`Part of Subtask: ${st.title} (Main Task: ${parent.key} - ${parent.title})`}
-                          className="text-[11px] font-medium text-slate-600 flex items-center gap-1 truncate bg-purple-50/50 px-2 py-1 rounded border border-purple-100"
-                        >
-                          <CornerDownRight className="w-3 h-3 text-purple-500 shrink-0" />
-                          <span className="font-bold text-slate-800 shrink-0">↳ Sub: {st.key || st.title}</span>
-                          <span className="text-slate-400">·</span>
-                          <span className="truncate text-slate-500">Main {parent.key}</span>
                         </div>
 
                         {/* Microtask Title */}
@@ -2356,7 +3178,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {/* Microtask Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
                         <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[11px] font-bold text-purple-700 bg-purple-50/80 px-2 py-0.5 rounded-md border border-purple-200">
+                            <span
+                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                              style={{
+                                backgroundColor: LEVEL_THEMES.MICROTASK.badgeBg,
+                                color: LEVEL_THEMES.MICROTASK.badgeText,
+                                borderColor: LEVEL_THEMES.MICROTASK.badgeBorder
+                              }}
+                            >
                               {col.label}
                             </span>
                             {mic.dueDate && (
@@ -2374,9 +3203,17 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             {mic.assigneeId ? (
                               <div
                                 title={`Assigned to ${mic.assigneeId.name || 'Member'}`}
-                                className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-[10px] uppercase shadow-2xs"
+                                className="flex items-center gap-1 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-full shadow-2xs max-w-[130px]"
                               >
-                                {(mic.assigneeId.name || 'M').charAt(0)}
+                                <div
+                                  className="w-4 h-4 rounded-full text-white flex items-center justify-center font-bold text-[9px] uppercase shrink-0"
+                                  style={{ backgroundColor: LEVEL_THEMES.MICROTASK.accentColor }}
+                                >
+                                  {(mic.assigneeId.name || 'M').charAt(0)}
+                                </div>
+                                <span className="text-[10px] font-semibold text-slate-800 truncate">
+                                  {mic.assigneeId.name}
+                                </span>
                               </div>
                             ) : (
                               <div
@@ -2390,6 +3227,9 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         </div>
                       </div>
                     );
+                    }
+
+                    return null;
                   })}
 
                   {/* Column Create Button */}
@@ -2560,6 +3400,60 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 </div>
               </div>
 
+              {/* Participating Teams Selector */}
+              <div>
+                <label className="block text-[11px] font-bold text-[#5E6C84] uppercase mb-1.5 flex items-center justify-between">
+                  <span>Participating Teams</span>
+                  <span className="text-[10px] font-normal text-slate-400">
+                    {newSprintTeams.length === 0 ? 'Shared (All Teams)' : `${newSprintTeams.length} Selected`}
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setNewSprintTeams([])}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      newSprintTeams.length === 0
+                        ? 'bg-[#0F172A] text-white shadow-xs'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    🌐 All Teams (Shared)
+                  </button>
+                  {projectTeams.map((tm: any) => {
+                    const isSelected = newSprintTeams.includes(tm.name);
+                    return (
+                      <button
+                        key={tm._id || tm.name}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setNewSprintTeams(newSprintTeams.filter((t) => t !== tm.name));
+                          } else {
+                            setNewSprintTeams([...newSprintTeams, tm.name]);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: tm.color || '#3B82F6' }}
+                        />
+                        <span>{tm.name}</span>
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Select specific team(s) for a dedicated team sprint, or leave on &ldquo;All Teams&rdquo; for a cross-functional sprint.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-[11px] font-bold text-[#5E6C84] uppercase mb-1">
                   Sprint Goal (Optional)
@@ -2682,6 +3576,57 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   </div>
                 );
               })()}
+
+              {/* Participating Teams Selector for Edit Sprint */}
+              <div>
+                <label className="block text-[11px] font-bold text-[#5E6C84] uppercase mb-1.5 flex items-center justify-between">
+                  <span>Participating Teams</span>
+                  <span className="text-[10px] font-normal text-slate-400">
+                    {editSprintTeams.length === 0 ? 'Shared (All Teams)' : `${editSprintTeams.length} Selected`}
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setEditSprintTeams([])}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      editSprintTeams.length === 0
+                        ? 'bg-[#0F172A] text-white shadow-xs'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    🌐 All Teams (Shared)
+                  </button>
+                  {projectTeams.map((tm: any) => {
+                    const isSelected = editSprintTeams.includes(tm.name);
+                    return (
+                      <button
+                        key={tm._id || tm.name}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setEditSprintTeams(editSprintTeams.filter((t) => t !== tm.name));
+                          } else {
+                            setEditSprintTeams([...editSprintTeams, tm.name]);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: tm.color || '#3B82F6' }}
+                        />
+                        <span>{tm.name}</span>
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div>
                 <label className="block text-[11px] font-bold text-[#5E6C84] uppercase mb-1">
@@ -3110,6 +4055,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           isOpen={isExcelImportOpen}
           onClose={() => setIsExcelImportOpen(false)}
           projectId={projectId}
+          projectName={projectDetail?.name}
           projectKey={projectDetail?.key || 'PRJ'}
           defaultSprintName={currentSprint?.name || undefined}
           defaultTeam={selectedTeam?.name || (selectedTeamFilter && selectedTeamFilter !== 'ALL' ? selectedTeamFilter : undefined)}

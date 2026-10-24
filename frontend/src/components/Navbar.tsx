@@ -96,7 +96,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 user?.name?.charAt(0) || 'U'
               )}
             </div>
-            <div className="hidden xl:block text-left">
+            <div className="hidden md:block text-left">
               <div className="text-sm font-bold text-[#111827] leading-tight group-hover:text-[#0F172A]">
                 {user?.name || 'Personal Account'}
               </div>

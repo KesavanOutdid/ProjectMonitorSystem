@@ -29,11 +29,13 @@ import {
   Check
 } from 'lucide-react';
 import { downloadProjectExcel } from '../lib/excelExport';
+import { useAuthStore } from '../store/authStore';
 
 interface ExcelImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
+  projectName?: string;
   projectKey?: string;
   defaultSprintName?: string;
   defaultTeam?: string;
@@ -43,6 +45,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   isOpen,
   onClose,
   projectId,
+  projectName,
   projectKey = 'PRJ',
   defaultSprintName,
   defaultTeam
@@ -50,6 +53,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const { user } = useAuthStore();
+  const isLevel1 = user?.role === 'SUPER_ADMIN' || user?.role === 'ORG_ADMIN';
+  const isLevel2 = user?.role === 'PROJECT_MANAGER';
+  const isLevel3 = user?.role === 'TEAM_LEAD';
+  const canImportExcel = isLevel1 || isLevel2 || isLevel3;
 
   const [step, setStep] = useState<'upload' | 'preview' | 'success'>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -150,9 +159,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     if (!previewData?.preparedTasks) return [];
     let list = previewData.preparedTasks;
     if (filterType === 'MAIN') {
-      list = list.filter((t: any) => !t.isSubtask && !t.isMicrotask);
+      list = list.filter((t: any) => !t.isSubtask && !t.isMinitask && !t.isMicrotask);
     } else if (filterType === 'SUBTASK') {
-      list = list.filter((t: any) => t.isSubtask || t.isMicrotask);
+      list = list.filter((t: any) => t.isSubtask || t.isMinitask || t.isMicrotask);
     } else if (filterType === 'VALID') {
       list = list.filter((t: any) => t.isValidTeam !== false && t.action !== 'SKIP');
     } else if (filterType === 'INVALID') {
@@ -176,6 +185,28 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   }, [previewData?.preparedTasks, filterType, searchTerm]);
 
   if (!isOpen) return null;
+
+  if (!canImportExcel) {
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl border border-slate-200 text-center">
+          <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Access Restricted</h3>
+          <p className="text-xs text-slate-500 mb-5 leading-relaxed">
+            Excel Import is restricted to <strong>1st 3 Levels only</strong> (Super/Org Admins, Project Managers, and Team Leads). Normal Team Members cannot import Excel project plans.
+          </p>
+          <button
+            onClick={onClose}
+            className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
@@ -233,11 +264,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         const sampleRows = [
           {
             'S.No': 1,
-            'Level 1': projectKey || 'Project',
-            'Level 2': effectivePhase,
-            'Level 3': 'Admin Login',
-            'Level 4 – Development Tasks': 'Design admin login UI',
-            'Level 5 – Micro Tasks': '',
+            'Project': projectName || projectKey || 'Project',
+            'Sprint': effectivePhase,
+            'Level 1 – Main Task': 'Admin Login',
+            'Level 2 – Subtask': 'Design admin login UI',
+            'Level 3 – Mini Tasks': 'Create login form layout',
+            'Level 4 – Micro Tasks': '',
             'Task Description': 'Design responsive login UI',
             'Duration (Days)': 3,
             'Priority': 'HIGH',
@@ -248,11 +280,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           },
           {
             'S.No': 2,
-            'Level 1': projectKey || 'Project',
-            'Level 2': effectivePhase,
-            'Level 3': 'Admin Login',
-            'Level 4 – Development Tasks': 'Develop login authentication API',
-            'Level 5 – Micro Tasks': 'Write unit tests for JWT validator',
+            'Project': projectName || projectKey || 'Project',
+            'Sprint': effectivePhase,
+            'Level 1 – Main Task': 'Admin Login',
+            'Level 2 – Subtask': 'Develop login authentication API',
+            'Level 3 – Mini Tasks': 'JWT Authentication Service',
+            'Level 4 – Micro Tasks': 'Write unit tests for JWT validator',
             'Task Description': 'Check edge cases and token expiry',
             'Duration (Days)': 1,
             'Priority': 'MEDIUM',
@@ -266,11 +299,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         const ws = XLSX.utils.json_to_sheet(sampleRows);
         ws['!cols'] = [
           { wch: 10 }, // S.No
-          { wch: 22 }, // Level 1
-          { wch: 24 }, // Level 2
-          { wch: 34 }, // Level 3
-          { wch: 38 }, // Level 4
-          { wch: 38 }, // Level 5
+          { wch: 24 }, // Project
+          { wch: 24 }, // Sprint
+          { wch: 34 }, // Level 1 – Main Task
+          { wch: 38 }, // Level 2 – Subtask
+          { wch: 38 }, // Level 3 – Mini Tasks
+          { wch: 38 }, // Level 4 – Micro Tasks
           { wch: 44 }, // Task Description
           { wch: 16 }, // Duration (Days)
           { wch: 14 }, // Priority
@@ -284,13 +318,16 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         XLSX.utils.book_append_sheet(wb, ws, 'Project Timeline Plan');
 
         const guideRows = [
-          { 'Column': 'Phase / Milestone', 'Required': 'Optional', 'Description': 'Project Sprint or Phase. If empty, uses Board default sprint or Backlog.' },
-          { 'Column': 'Task Type', 'Required': 'Yes', 'Description': 'Enter "Main Task" or "Subtask". Any "Subtask" row automatically belongs to the preceding Main Task above it!' },
+          { 'Column': 'Project', 'Required': 'Required', 'Description': `Project Name: ${projectName || projectKey}` },
+          { 'Column': 'Sprint', 'Required': 'Optional', 'Description': 'Project Sprint or Phase. If empty, uses Board active sprint or Backlog.' },
+          { 'Column': 'Level 1 – Main Task', 'Required': 'Required for Main Task', 'Description': 'Primary deliverable / User Story or feature name.' },
+          { 'Column': 'Level 2 – Subtask', 'Required': 'Optional', 'Description': 'Development Subtask under the preceding Main Task.' },
+          { 'Column': 'Level 3 – Mini Tasks', 'Required': 'Optional', 'Description': 'Mini-task under the preceding Subtask.' },
+          { 'Column': 'Level 4 – Micro Tasks', 'Required': 'Optional', 'Description': 'Micro-task checklist item under the preceding Mini-task.' },
           { 'Column': 'Task Key', 'Required': 'Optional', 'Description': 'Format: PROJECT-TASKTYPE-TEAM-NUMBER. Main Task: R-MT-HE-107 or R-MT-GEN-1. Subtask: R-ST-HE-107-1. Leave blank to auto-create, or specify existing key to UPDATE.' },
-          { 'Column': 'Task Title', 'Required': 'Yes', 'Description': 'Task title or deliverable summary.' },
-          { 'Column': 'Start & End Dates', 'Required': 'Optional', 'Description': 'Dates in YYYY-MM-DD. Auto-calculated using Duration (Days) if one is omitted.' },
+          { 'Column': 'Task Description', 'Required': 'Optional', 'Description': 'Detailed specifications, requirements, or acceptance criteria.' },
           { 'Column': 'Duration (Days)', 'Required': 'Optional', 'Description': 'Estimated working days for the activity.' },
-          { 'Column': 'Dependencies / Predecessors', 'Required': 'Optional', 'Description': 'Title or Key of blocking predecessor tasks. Automatically wires into DAG Dependency Graph!' },
+          { 'Column': 'Priority & Status', 'Required': 'Optional', 'Description': 'Priority: LOW, MEDIUM, HIGH, URGENT / Status: TODO, IN_PROGRESS, IN_REVIEW, DONE' },
           { 'Column': 'Team & Assignee', 'Required': 'Optional', 'Description': 'Discipline and Owner according to your project.' }
         ];
         const wsGuide = XLSX.utils.json_to_sheet(guideRows);
@@ -917,7 +954,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           {t.isMicrotask ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                              Microtask
+                              Micro-task
+                            </span>
+                          ) : t.isMinitask ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                              Mini-task
                             </span>
                           ) : t.isSubtask ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
@@ -944,6 +985,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               <CornerDownRight className="w-3 h-3 text-purple-500 shrink-0" />
                               <span className="font-bold text-purple-700">{t.key}</span>
                             </div>
+                          ) : t.isMinitask ? (
+                            <div className="flex items-center gap-1">
+                              <CornerDownRight className="w-3 h-3 text-teal-500 shrink-0" />
+                              <span className="font-bold text-teal-700">{t.key}</span>
+                            </div>
                           ) : t.isSubtask ? (
                             <div className="flex items-center gap-1">
                               <CornerDownRight className="w-3 h-3 text-indigo-500 shrink-0" />
@@ -960,7 +1006,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-1.5">
                                 <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200 shrink-0">
-                                  ↳ MICROTASK
+                                  ↳ MICRO-TASK
                                 </span>
                                 <span className="font-semibold text-slate-800 text-xs truncate" title={t.title}>
                                   {t.title}
@@ -968,6 +1014,25 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               </div>
                               <span className="text-[10px] text-slate-400 truncate">
                                 Parent: <span className="font-semibold text-slate-600">{t.parentKey}</span> {t.parentTitle}
+                              </span>
+                              {t.description && (
+                                <span className="text-[10px] text-slate-500 italic truncate" title={t.description}>
+                                  {t.description}
+                                </span>
+                              )}
+                            </div>
+                          ) : t.isMinitask ? (
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-teal-100 text-teal-800 border border-teal-200 shrink-0">
+                                  ↳ MINI-TASK
+                                </span>
+                                <span className="font-semibold text-slate-800 text-xs truncate" title={t.title}>
+                                  {t.title}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 truncate">
+                                Upper subtask: <span className="font-semibold text-slate-600">{t.parentKey}</span> {t.parentTitle}
                               </span>
                               {t.description && (
                                 <span className="text-[10px] text-slate-500 italic truncate" title={t.description}>

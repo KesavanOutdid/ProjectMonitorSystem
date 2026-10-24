@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 import { downloadProjectExcel } from '../lib/excelExport';
+import { useAuthStore } from '../store/authStore';
 
 interface TimelineViewProps {
   projectId: string;
@@ -28,6 +29,12 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
   projectId,
   onSelectTask
 }) => {
+  const { user } = useAuthStore();
+  const isLevel1 = user?.role === 'SUPER_ADMIN' || user?.role === 'ORG_ADMIN';
+  const isLevel2 = user?.role === 'PROJECT_MANAGER';
+  const isLevel3 = user?.role === 'TEAM_LEAD';
+  const canImportExcel = isLevel1 || isLevel2 || isLevel3;
+
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
@@ -85,13 +92,15 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsExcelImportOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer hover:shadow-xs active:scale-[0.98]"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
-            <span>Import Project Plan</span>
-          </button>
+          {canImportExcel && (
+            <button
+              onClick={() => setIsExcelImportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer hover:shadow-xs active:scale-[0.98]"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
+              <span>Import Project Plan</span>
+            </button>
+          )}
           <button
             onClick={handleExportToExcel}
             disabled={isExportingExcel}

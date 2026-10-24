@@ -213,7 +213,10 @@ const taskSchema = new mongoose.Schema(
         assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
         createdAt: { type: Date, default: Date.now },
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        microtasks: [
+        isLocked: { type: Boolean, default: false },
+        lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        lockedAt: { type: Date, default: null },
+        minitasks: [
           {
             key: { type: String, uppercase: true, trim: true },
             title: { type: String, required: true, trim: true },
@@ -225,7 +228,47 @@ const taskSchema = new mongoose.Schema(
             dueDate: { type: Date, default: null },
             assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
             createdAt: { type: Date, default: Date.now },
-            createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+            createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            isLocked: { type: Boolean, default: false },
+            lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+            lockedAt: { type: Date, default: null },
+            microtasks: [
+              {
+                key: { type: String, uppercase: true, trim: true },
+                title: { type: String, required: true, trim: true },
+                description: { type: String, default: '' },
+                status: { type: String, default: 'TODO', trim: true },
+                isCompleted: { type: Boolean, default: false },
+                completedAt: { type: Date, default: null },
+                startDate: { type: Date, default: null },
+                dueDate: { type: Date, default: null },
+                assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+                createdAt: { type: Date, default: Date.now },
+                createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+                isLocked: { type: Boolean, default: false },
+                lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+                lockedAt: { type: Date, default: null }
+              }
+            ]
+          }
+        ],
+        microtasks: [
+          {
+            key: { type: String, uppercase: true, trim: true },
+            title: { type: String, trim: true },
+            description: { type: String, default: '' },
+            status: { type: String, default: 'TODO', trim: true },
+            isCompleted: { type: Boolean, default: false },
+            completedAt: { type: Date, default: null },
+            startDate: { type: Date, default: null },
+            dueDate: { type: Date, default: null },
+            assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+            createdAt: { type: Date, default: Date.now },
+            createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            isLocked: { type: Boolean, default: false },
+            lockedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+            lockedAt: { type: Date, default: null },
+            minitasks: []
           }
         ]
       }
@@ -270,6 +313,20 @@ const taskSchema = new mongoose.Schema(
     isRestricted: {
       type: Boolean,
       default: false
+    },
+    isLocked: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    lockedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    lockedAt: {
+      type: Date,
+      default: null
     },
     isDeleted: {
       type: Boolean,

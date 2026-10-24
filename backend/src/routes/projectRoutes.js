@@ -128,7 +128,11 @@ router.put(
 router.get('/:projectId/sprints/:sprintId/burndown', getSprintBurndown);
 
 // Excel Sprint & Task Bulk Import / Export
-router.get('/:projectId/import-excel/template', downloadProjectExcelTemplate);
+router.get(
+  '/:projectId/import-excel/template',
+  authorize(USER_ROLES.SUPER_ADMIN, USER_ROLES.ORG_ADMIN, USER_ROLES.PROJECT_MANAGER, USER_ROLES.TEAM_LEAD),
+  downloadProjectExcelTemplate
+);
 router.get('/:projectId/export-excel', exportProjectExcel);
 router.post(
   '/:projectId/import-excel/preview',

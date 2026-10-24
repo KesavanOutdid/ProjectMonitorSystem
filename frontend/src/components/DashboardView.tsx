@@ -51,7 +51,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [taskSearch, setTaskSearch] = useState('');
   const [isOverdueModalOpen, setIsOverdueModalOpen] = useState(false);
   const [overdueModalScope, setOverdueModalScope] = useState<'ALL' | 'MINE'>('ALL');
-  const [workTier, setWorkTier] = useState<'COMBINED' | 'MAIN' | 'SUBTASK' | 'MICRO'>('COMBINED');
+  const [workTier, setWorkTier] = useState<'COMBINED' | 'MAIN' | 'SUBTASK' | 'MINI' | 'MICRO'>('COMBINED');
 
   const { data: dashboard, isLoading } = useQuery({
     queryKey: ['workspace-dashboard', currentWorkspace?._id, user?._id],
@@ -144,12 +144,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [scopedTasks, now]);
   const dynamicCompletionRate = dynamicTotalTasks > 0 ? Math.round((dynamicCompletedTasks / dynamicTotalTasks) * 100) : 0;
 
-  // Multi-tier computation (Main Tasks, Subtasks, Microtasks)
+  // Multi-tier computation (Main Tasks, Subtasks, Minitasks, Microtasks)
   const multiTierStats = useMemo(() => {
     let subtasksCount = 0;
     let subtasksDone = 0;
     let subtasksInProg = 0;
     let subtasksOverdue = 0;
+
+    let minitasksCount = 0;
+    let minitasksDone = 0;
+    let minitasksInProg = 0;
+    let minitasksOverdue = 0;
 
     let microtasksCount = 0;
     let microtasksDone = 0;
@@ -165,6 +170,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (isDone) subtasksDone++;
           else if (isInProg) subtasksInProg++;
           if (st.dueDate && !isDone && new Date(st.dueDate) < now) subtasksOverdue++;
+
+          if (Array.isArray(st.minitasks)) {
+            minitasksCount += st.minitasks.length;
+            st.minitasks.forEach((min: any) => {
+              const isMinDone = min.isCompleted || min.status === 'DONE';
+              const isMinInProg = !isMinDone && (min.status === 'IN_PROGRESS' || min.status === 'IN_REVIEW');
+              if (isMinDone) minitasksDone++;
+              else if (isMinInProg) minitasksInProg++;
+              if (min.dueDate && !isMinDone && new Date(min.dueDate) < now) minitasksOverdue++;
+
+              if (Array.isArray(min.microtasks)) {
+                microtasksCount += min.microtasks.length;
+                min.microtasks.forEach((mic: any) => {
+                  const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                  const isMicInProg = !isMicDone && (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW');
+                  if (isMicDone) microtasksDone++;
+                  else if (isMicInProg) microtasksInProg++;
+                  if (mic.dueDate && !isMicDone && new Date(mic.dueDate) < now) microtasksOverdue++;
+                });
+              }
+            });
+          }
 
           if (Array.isArray(st.microtasks)) {
             microtasksCount += st.microtasks.length;
@@ -185,10 +212,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const mainInProg = dynamicInProgressTasks;
     const mainOverdue = dynamicOverdueTasks;
 
-    const combinedTotal = mainTotal + subtasksCount + microtasksCount;
-    const combinedDone = mainDone + subtasksDone + microtasksDone;
-    const combinedInProg = mainInProg + subtasksInProg + microtasksInProg;
-    const combinedOverdue = mainOverdue + subtasksOverdue + microtasksOverdue;
+    const combinedTotal = mainTotal + subtasksCount + minitasksCount + microtasksCount;
+    const combinedDone = mainDone + subtasksDone + minitasksDone + microtasksDone;
+    const combinedInProg = mainInProg + subtasksInProg + minitasksInProg + microtasksInProg;
+    const combinedOverdue = mainOverdue + subtasksOverdue + minitasksOverdue + microtasksOverdue;
 
     let activeTotal = combinedTotal;
     let activeDone = combinedDone;
@@ -205,6 +232,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       activeDone = subtasksDone;
       activeInProg = subtasksInProg;
       activeOverdue = subtasksOverdue;
+    } else if (workTier === 'MINI') {
+      activeTotal = minitasksCount;
+      activeDone = minitasksDone;
+      activeInProg = minitasksInProg;
+      activeOverdue = minitasksOverdue;
     } else if (workTier === 'MICRO') {
       activeTotal = microtasksCount;
       activeDone = microtasksDone;
@@ -219,6 +251,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       mainDone,
       subtasksCount,
       subtasksDone,
+      minitasksCount,
+      minitasksDone,
       microtasksCount,
       microtasksDone,
       combinedTotal,
@@ -495,8 +529,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </span>
                         )}
                         <span>•</span>
-                        <span>
-                          <strong className="text-gray-900 font-bold">{proj.totalTasks}</strong> tasks ({proj.completedTasks} completed)
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span>
+                            <strong className="text-gray-900 font-bold">{proj.totalDeliverables || proj.totalTasks}</strong> tasks ({proj.completedDeliverables ?? proj.completedTasks} completed)
+                          </span>
+                          {(proj.subtasksCount > 0 || proj.minitasksCount > 0 || proj.microtasksCount > 0) && (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 font-bold">
+                              <span>{proj.mainTasksCount || 1} Main</span>
+                              <span className="text-slate-300">•</span>
+                              <span>{proj.subtasksCount || 0} Sub</span>
+                              <span className="text-slate-300">•</span>
+                              <span>{proj.minitasksCount || 0} Mini</span>
+                              {proj.microtasksCount > 0 && (
+                                <>
+                                  <span className="text-slate-300">•</span>
+                                  <span>{proj.microtasksCount} Micro</span>
+                                </>
+                              )}
+                            </span>
+                          )}
                         </span>
                         {proj.overdueTasks > 0 && (
                           <>
@@ -554,15 +605,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="flex items-center gap-4 shrink-0 text-xs sm:text-sm font-bold text-gray-600 sm:border-l sm:border-gray-100 sm:pl-5">
                     <span className="flex items-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
-                      <span>{proj.completedTasks} Done</span>
+                      <span>{proj.completedDeliverables ?? proj.completedTasks} Done</span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Clock className="w-4 h-4 text-amber-500" />
-                      <span>{proj.inProgressTasks} In Progress</span>
+                      <span>{proj.inProgressDeliverables ?? proj.inProgressTasks} In Progress</span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Layers className="w-4 h-4 text-blue-500" />
-                      <span>{proj.todoTasks + (proj.backlogTasks || 0)} To Do</span>
+                      <span>{proj.todoDeliverables ?? (proj.todoTasks + (proj.backlogTasks || 0))} To Do</span>
                     </span>
                   </div>
                 </div>
@@ -602,7 +653,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <div className="flex items-center justify-between text-xs sm:text-sm">
                               <span className="text-gray-600 font-semibold">Sprint Velocity</span>
                               <span className="font-extrabold text-gray-900">
-                                {proj.activeSprint.completedTasks} / {proj.activeSprint.totalTasks} issues ({proj.activeSprint.completionPercent}%)
+                                {proj.activeSprint.completedTasks} / {proj.activeSprint.totalTasks} tasks ({proj.activeSprint.completionPercent}%)
                               </span>
                             </div>
                             <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
@@ -986,6 +1037,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setWorkTier('MINI')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    workTier === 'MINI' ? 'bg-teal-600 text-white shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Mini-tasks ({multiTierStats.minitasksCount})
+                </button>
+                <button
+                  type="button"
                   onClick={() => setWorkTier('MICRO')}
                   className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                     workTier === 'MICRO' ? 'bg-indigo-600 text-white shadow-xs' : 'text-gray-600 hover:text-gray-900'
@@ -1000,6 +1060,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Main: <strong className="text-gray-800">{multiTierStats.mainDone}/{multiTierStats.mainTotal}</strong></span>
               <span>•</span>
               <span>Sub: <strong className="text-gray-800">{multiTierStats.subtasksDone}/{multiTierStats.subtasksCount}</strong></span>
+              <span>•</span>
+              <span>Mini: <strong className="text-gray-800">{multiTierStats.minitasksDone}/{multiTierStats.minitasksCount}</strong></span>
               <span>•</span>
               <span>Micro: <strong className="text-gray-800">{multiTierStats.microtasksDone}/{multiTierStats.microtasksCount}</strong></span>
             </div>
@@ -1017,6 +1079,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   ? 'Main Tasks Scope'
                   : workTier === 'SUBTASK'
                   ? 'Subtasks Scope'
+                  : workTier === 'MINI'
+                  ? 'Mini-tasks Scope'
                   : 'Microtasks Scope',
                 value: activeProject
                   ? `${multiTierStats.activeTotal} Items (${activeProject.name})`
@@ -1301,7 +1365,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <span className="text-xs font-mono font-bold text-gray-400">[{activeProject.key}]</span>
                         </div>
                         <span className="font-black text-[#0F172A] ml-2 shrink-0 text-xs sm:text-sm">
-                          {activeProject.completedTasks} / {activeProject.totalTasks} Issues ({activeProject.completionPercent}%)
+                          {activeProject.completedTasks} / {activeProject.totalTasks} Tasks ({activeProject.completionPercent}%)
                         </span>
                       </div>
                       <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden flex">
@@ -1324,7 +1388,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <div key={stg.id} className="p-2.5 rounded-xl bg-gray-50/80 border border-gray-100">
                               <span className="text-xs font-bold text-gray-500 block truncate">{stg.label}</span>
                               <div className="flex items-center justify-between mt-1">
-                                <span className="text-sm font-black text-[#0F172A]">{stg.count} issues</span>
+                                <span className="text-sm font-black text-[#0F172A]">{stg.count} tasks</span>
                                 <span className="text-xs font-bold text-gray-400">{stg.percent}%</span>
                               </div>
                             </div>
@@ -1354,7 +1418,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               <span className="text-xs font-mono font-bold text-gray-400">[{p.key}]</span>
                             </div>
                             <span className="font-black text-[#0F172A] ml-2 shrink-0 text-xs sm:text-sm">
-                              {p.completedTasks} / {p.totalTasks} Issues ({p.completionPercent}%)
+                              {p.completedTasks} / {p.totalTasks} Tasks ({p.completionPercent}%)
                             </span>
                           </div>
                           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden flex">
@@ -1427,7 +1491,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             )}
                           </div>
                           <span className="font-black text-gray-900 text-xs sm:text-sm ml-2 shrink-0">
-                            {tm.completedTasks || 0}/{tm.totalTasks || 0} issues ({tm.completionPercent || 0}%)
+                            {tm.completedTasks || 0}/{tm.totalTasks || 0} tasks ({tm.completionPercent || 0}%)
                           </span>
                         </div>
                         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">

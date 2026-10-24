@@ -423,15 +423,24 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
   rows.forEach((row, index) => {
     const hasAnyTaskTitle = Boolean(
       getRowValue(row, [
+        'Level 4 – Micro Tasks',
+        'Level 4 - Micro Tasks',
+        'Level 6 – Micro Tasks',
+        'Level 6 - Micro Tasks',
         'Level 5 – Micro Tasks',
         'Level 5 - Micro Tasks',
-        'Level 5 – Micro Task',
-        'Level 5 - Micro Task',
-        'Level 5',
-        'Level5',
+        'Level 3 – Mini Tasks',
+        'Level 3 - Mini Tasks',
+        'Level 5 – Mini Tasks',
+        'Level 5 - Mini Tasks',
         'Micro-Task',
         'Microtask',
         'Micro Task',
+        'Mini-Task',
+        'Minitask',
+        'Mini Task',
+        'Level 2 – Subtask',
+        'Level 2 - Subtask',
         'Level 4 – Development Tasks',
         'Level 4 - Development Tasks',
         'Level 4 – Development Task',
@@ -442,6 +451,8 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         'Development Task',
         'Subtask',
         'Sub Task',
+        'Level 1 – Main Task',
+        'Level 1 - Main Task',
         'Level 3',
         'Level3',
         'Main Task',
@@ -459,8 +470,6 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     if (!hasAnyTaskTitle) return;
 
     const sprintNameRaw = getRowValue(row, [
-      'Level 2',
-      'Level2',
       'Sprint',
       'Sprint Name',
       'Phase / Milestone',
@@ -468,7 +477,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       'Milestone',
       'Stage',
       'Work Package',
-      'Cycle'
+      'Cycle',
+      'Level 2',
+      'Level2'
     ], options.defaultSprintName || '').toString().trim();
 
     if (sprintNameRaw && sprintNameRaw.toLowerCase() !== 'backlog') {
@@ -538,10 +549,13 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
 
   const preparedMainTasks = [];
   const displayTasks = []; // Flattened list for the preview table
+  const addedSubtaskKeysToDisplay = new Set();
+  const addedMinitaskKeysToDisplay = new Set();
   const warnings = [];
   let newTasksCount = 0;
   let updateTasksCount = 0;
   let subtasksCount = 0;
+  let minitasksCount = 0;
   let microtasksCount = 0;
   let invalidTasksCount = 0;
 
@@ -549,20 +563,34 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
   const mainTasksByKey = new Map();
   let lastMainTask = null; // Upper main task pointer
   let lastSubtask = null; // Upper subtask pointer
+  let lastMinitask = null; // Upper minitask pointer
 
   rows.forEach((row, index) => {
     // ─── 0. Level Extractions ──────────────────────────────────────────────
-    const level1Val = getRowValue(row, [
-      'Level 1',
-      'Level1',
-      'Project Name',
-      'Project',
-      'Project Title'
-    ]).toString().trim();
+    // Detect if uploaded file uses the new 4-level task hierarchy (Project | Sprint | Level 1 – Main Task | Level 2 – Subtask...)
+    const hasNewMainTaskHeader = Boolean(getRowValue(row, [
+      'Level 1 – Main Task', 'Level 1 - Main Task', 'Level 1: Main Task', 'Level 1 Main Task'
+    ]));
+    const hasNewSubtaskHeader = Boolean(getRowValue(row, [
+      'Level 2 – Subtask', 'Level 2 - Subtask', 'Level 2: Subtask', 'Level 2 Subtask', 'Level 2 – Sub Tasks', 'Level 2 - Sub Tasks'
+    ]));
+    const isNewHierarchyFormat = hasNewMainTaskHeader || hasNewSubtaskHeader || Boolean(getRowValue(row, ['Level 3 – Mini Tasks', 'Level 4 – Micro Tasks']));
 
-    const level2Val = getRowValue(row, [
-      'Level 2',
-      'Level2',
+    // Project Name (Col B)
+    let projectVal = getRowValue(row, [
+      'Project',
+      'Project Name',
+      'Project Title',
+      'Project Key',
+      'Level 1 – Project',
+      'Level 1 - Project'
+    ]).toString().trim();
+    if (!projectVal && !isNewHierarchyFormat) {
+      projectVal = getRowValue(row, ['Level 1', 'Level1']).toString().trim();
+    }
+
+    // Sprint Name (Col C)
+    let sprintVal = getRowValue(row, [
       'Sprint',
       'Sprint Name',
       'Phase / Milestone',
@@ -570,25 +598,41 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       'Milestone',
       'Stage',
       'Work Package',
-      'Cycle'
+      'Cycle',
+      'Level 2 – Sprint',
+      'Level 2 - Sprint'
     ]).toString().trim();
+    if (!sprintVal && !isNewHierarchyFormat) {
+      sprintVal = getRowValue(row, ['Level 2', 'Level2']).toString().trim();
+    }
 
-    const level3Val = getRowValue(row, [
-      'Level 3',
-      'Level3',
+    // Level 1 – Main Task (Col D in new format, or Col D as Level 3 in legacy format)
+    let mainTaskVal = getRowValue(row, [
+      'Level 1 – Main Task',
+      'Level 1 - Main Task',
+      'Level 1: Main Task',
+      'Level 1 Main Task',
       'Main Task',
       'Main Task Title',
-      'Level 3 - Main Task',
-      'Level 3 – Main Task'
+      'Level 3 – Main Task',
+      'Level 3 - Main Task'
     ]).toString().trim();
+    if (!mainTaskVal && !isNewHierarchyFormat) {
+      mainTaskVal = getRowValue(row, ['Level 3', 'Level3']).toString().trim();
+    }
 
-    const level4Val = getRowValue(row, [
+    // Level 2 – Subtask (Col E in new format, or Col E as Level 4 in legacy format)
+    let subtaskVal = getRowValue(row, [
+      'Level 2 – Subtask',
+      'Level 2 - Subtask',
+      'Level 2: Subtask',
+      'Level 2 Subtask',
+      'Level 2 – Sub Tasks',
+      'Level 2 - Sub Tasks',
       'Level 4 – Development Tasks',
       'Level 4 - Development Tasks',
       'Level 4 – Development Task',
       'Level 4 - Development Task',
-      'Level 4',
-      'Level4',
       'Development Tasks',
       'Development Task',
       'Subtask',
@@ -596,31 +640,76 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       'Subtask Title',
       'Sub-Task'
     ]).toString().trim();
+    if (!subtaskVal && !isNewHierarchyFormat) {
+      subtaskVal = getRowValue(row, ['Level 4', 'Level4']).toString().trim();
+    }
 
-    const level5Val = getRowValue(row, [
-      'Level 5 – Micro Tasks',
-      'Level 5 - Micro Tasks',
-      'Level 5 – Micro Task',
-      'Level 5 - Micro Task',
-      'Level 5',
-      'Level5',
+    // Level 3 – Mini Tasks (Col F in new format, or Col F as Level 5 in legacy format)
+    let minitaskVal = getRowValue(row, [
+      'Level 3 – Mini Tasks',
+      'Level 3 - Mini Tasks',
+      'Level 3: Mini Tasks',
+      'Level 3 Mini Tasks',
+      'Level 3 – Mini Task',
+      'Level 3 - Mini Task',
+      'Level 5 – Mini Tasks',
+      'Level 5 - Mini Tasks',
+      'Level 5 – Mini Task',
+      'Level 5 - Mini Task',
+      'Mini-Task',
+      'Minitask',
+      'Mini Task',
+      'Mini Tasks',
+      'Mini-task Title'
+    ]).toString().trim();
+    if (!minitaskVal && !isNewHierarchyFormat) {
+      minitaskVal = getRowValue(row, ['Level 5', 'Level5']).toString().trim();
+    }
+
+    // Level 4 – Micro Tasks (Col G in new format, or Col G as Level 6 in legacy format)
+    let microtaskVal = getRowValue(row, [
+      'Level 4 – Micro Tasks',
+      'Level 4 - Micro Tasks',
+      'Level 4: Micro Tasks',
+      'Level 4 Micro Tasks',
+      'Level 4 – Micro Task',
+      'Level 4 - Micro Task',
+      'Level 6 – Micro Tasks',
+      'Level 6 - Micro Tasks',
+      'Level 6 – Micro Task',
+      'Level 6 - Micro Task',
       'Micro-Task',
       'Microtask',
       'Micro Task',
       'Micro Tasks',
       'Microtask Title'
     ]).toString().trim();
+    if (!microtaskVal && !isNewHierarchyFormat) {
+      microtaskVal = getRowValue(row, ['Level 6', 'Level6']).toString().trim();
+    }
 
-    const isLevelFormat = Boolean(level3Val || level4Val || level5Val);
+    // Normalize level variables for downstream processing
+    const level1Val = projectVal;
+    const level2Val = sprintVal;
+    const level3Val = mainTaskVal;
+    const level4Val = subtaskVal;
+    const level5Val = minitaskVal;
+    const level6Val = microtaskVal;
+
+    const isLevelFormat = Boolean(level3Val || level4Val || level5Val || level6Val);
     let title = '';
     let isRowMicrotask = false;
+    let isRowMinitask = false;
     let isRowSubtask = false;
     let isExplicitMain = false;
 
     if (isLevelFormat) {
-      if (level5Val) {
-        title = level5Val;
+      if (level6Val) {
+        title = level6Val;
         isRowMicrotask = true;
+      } else if (level5Val) {
+        title = level5Val;
+        isRowMinitask = true;
       } else if (level4Val) {
         title = level4Val;
         isRowSubtask = true;
@@ -660,11 +749,13 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         'Item Type'
       ]).toString().toUpperCase().trim();
 
-      const isExplicitMicro = rawTypeVal.includes('MIC') || rawTypeVal === '3';
-      const isExplicitSub = !isExplicitMicro && (rawTypeVal.includes('SUB') || ['CHILD', 'YES', 'TRUE', '2'].includes(rawTypeVal));
-      isExplicitMain = !isExplicitMicro && (rawTypeVal.includes('MAIN') || ['PARENT', 'NO', 'FALSE', '0', '1'].includes(rawTypeVal));
+      const isExplicitMicro = rawTypeVal.includes('MIC') || rawTypeVal === '4' || rawTypeVal === '6';
+      const isExplicitMini = !isExplicitMicro && (rawTypeVal.includes('MIN') || rawTypeVal === '3' || rawTypeVal === '5');
+      const isExplicitSub = !isExplicitMicro && !isExplicitMini && (rawTypeVal.includes('SUB') || ['CHILD', 'YES', 'TRUE', '2'].includes(rawTypeVal));
+      isExplicitMain = !isExplicitMicro && !isExplicitMini && !isExplicitSub && (rawTypeVal.includes('MAIN') || ['PARENT', 'NO', 'FALSE', '0', '1'].includes(rawTypeVal));
       isRowMicrotask = isExplicitMicro;
-      isRowSubtask = !isExplicitMain && !isExplicitMicro && (isExplicitSub || Boolean(parentRef));
+      isRowMinitask = isExplicitMini;
+      isRowSubtask = !isExplicitMain && !isExplicitMicro && !isExplicitMini && (isExplicitSub || Boolean(parentRef));
     }
 
     if (!title) return; // Skip empty rows
@@ -823,19 +914,22 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     const isMilestone = ['YES', 'TRUE', '1', 'MILESTONE'].includes(milestoneFlagRaw);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CASE A0: THIS ROW IS A MICROTASK
+    // CASE A00: THIS ROW IS A MICROTASK (Level 6 / Level 4 in DB)
     // ─────────────────────────────────────────────────────────────────────────
     if (isRowMicrotask) {
       const targetMainTitle = level3Val || (lastMainTask ? lastMainTask.title : '');
       const targetSubTitle = level4Val || (lastSubtask ? lastSubtask.title : '');
+      const targetMiniTitle = level5Val || (lastMinitask ? lastMinitask.title : '');
 
-      let parentMain = lastMainTask;
+      let parentMain = null;
       if (targetMainTitle) {
         const cleanMT = targetMainTitle.toLowerCase().trim();
-        parentMain = mainTasksByTitle.get(cleanMT) || existingTaskByTitle.get(cleanMT) || lastMainTask;
+        parentMain = mainTasksByTitle.get(cleanMT) || (lastMainTask?.title?.toLowerCase().trim() === cleanMT ? lastMainTask : null);
+      } else if (lastMainTask) {
+        parentMain = lastMainTask;
       }
 
-      // If parentMain doesn't exist yet, auto-create it
+      // If parentMain doesn't exist yet in prepared batch, wrap existing or auto-create it
       if (!parentMain && targetMainTitle) {
         let existingMain = existingTaskByTitle.get(targetMainTitle.toLowerCase().trim());
         const isUpdate = Boolean(existingMain);
@@ -879,7 +973,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           phase: effectiveSprint,
           sprintName: effectiveSprint,
           sprintIndex: effectiveSprint,
-          subtasks: existingMain?.subtasks ? [...existingMain.subtasks] : []
+          subtasks: existingMain?.subtasks ? JSON.parse(JSON.stringify(existingMain.subtasks)) : []
         };
 
         preparedMainTasks.push(parentMain);
@@ -910,13 +1004,14 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         lastMainTask = parentMain;
       }
 
-      let parentSubtask = lastSubtask;
+      let parentSubtask = null;
       if (parentMain && Array.isArray(parentMain.subtasks)) {
         if (targetSubTitle) {
           const cleanST = targetSubTitle.toLowerCase().trim();
-          parentSubtask = parentMain.subtasks.find(st => (st.title && st.title.toLowerCase().trim() === cleanST));
-        }
-        if (!parentSubtask && parentMain.subtasks.length > 0) {
+          parentSubtask = parentMain.subtasks.find(st => (st.title && st.title.toLowerCase().trim() === cleanST)) || null;
+        } else if (lastSubtask && parentMain.subtasks.includes(lastSubtask)) {
+          parentSubtask = lastSubtask;
+        } else if (parentMain.subtasks.length > 0) {
           parentSubtask = parentMain.subtasks[parentMain.subtasks.length - 1];
         }
       }
@@ -936,10 +1031,10 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           isCompleted: false,
           startDate: taskStartDate,
           dueDate: taskDueDate,
-          assigneeId: matchedAssignee ? matchedAssignee._id : null,
-          assigneeName: matchedAssignee ? matchedAssignee.name : null,
-          assigneeEmail: matchedAssignee ? matchedAssignee.email : null,
-          microtasks: []
+          assigneeId: null,
+          assigneeName: null,
+          assigneeEmail: null,
+          minitasks: []
         };
         if (!parentMain.subtasks) parentMain.subtasks = [];
         parentMain.subtasks.push(parentSubtask);
@@ -948,32 +1043,72 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
 
       if (parentSubtask) {
         lastSubtask = parentSubtask;
-        if (!parentSubtask.microtasks) parentSubtask.microtasks = [];
+
+        let parentMinitask = null;
+        if (Array.isArray(parentSubtask.minitasks)) {
+          if (targetMiniTitle) {
+            const cleanMIN = targetMiniTitle.toLowerCase().trim();
+            parentMinitask = parentSubtask.minitasks.find(m => (m.title && m.title.toLowerCase().trim() === cleanMIN)) || null;
+          } else if (lastMinitask && parentSubtask.minitasks.includes(lastMinitask)) {
+            parentMinitask = lastMinitask;
+          } else if (parentSubtask.minitasks.length > 0) {
+            parentMinitask = parentSubtask.minitasks[parentSubtask.minitasks.length - 1];
+          }
+        }
+
+        // If parentMinitask still null, auto-create it under parentSubtask
+        if (!parentMinitask) {
+          const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
+          const mtId = parentMain?.taskNumber || 1;
+          const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
+          const miniIdx = (parentSubtask.minitasks?.length || 0) + 1;
+          const miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtId}-${subIdx}-${miniIdx}`;
+
+          parentMinitask = {
+            _id: new mongoose.Types.ObjectId(),
+            key: miniKey,
+            title: targetMiniTitle || `${parentSubtask.title} Tasks`,
+            description: '',
+            status: 'TODO',
+            isCompleted: false,
+            startDate: taskStartDate,
+            dueDate: taskDueDate,
+            assigneeId: null,
+            assigneeName: null,
+            assigneeEmail: null,
+            createdBy: userId,
+            createdAt: new Date(),
+            microtasks: []
+          };
+          if (!parentSubtask.minitasks) parentSubtask.minitasks = [];
+          parentSubtask.minitasks.push(parentMinitask);
+          minitasksCount++;
+        }
+
+        lastMinitask = parentMinitask;
+        if (!parentMinitask.microtasks) parentMinitask.microtasks = [];
         microtasksCount++;
 
-        // If microtask is created under subtask, subtask assignee must be blank/unassigned
+        // Clear parent level assignees when microtasks exist
+        parentMinitask.assigneeId = null;
+        parentMinitask.assigneeName = null;
+        parentMinitask.assigneeEmail = null;
         parentSubtask.assigneeId = null;
         parentSubtask.assigneeName = null;
         parentSubtask.assigneeEmail = null;
 
-        // Parent main task assignee must also be blank/unassigned
-        if (parentMain) {
-          parentMain.assigneeId = null;
-          parentMain.assigneeName = null;
-          parentMain.assigneeEmail = null;
-        }
-
-        const micIndex = parentSubtask.microtasks.length + 1;
+        const micIndex = parentMinitask.microtasks.length + 1;
         const mtId = parentMain?.taskNumber || 1;
-        const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
+        const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)(?:-\d+)?$/)?.[1] || 1) : 1;
+        const miniIdx = parentMinitask.key ? (parentMinitask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
         const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
         let micKey = explicitKey;
-        if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+$/.test(micKey)) {
-          micKey = `${projKey}-MIC-${cleanTeamCode}-${mtId}-${subIdx}-${micIndex}`;
+        if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+-\d+$/.test(micKey)) {
+          micKey = `${projKey}-MIC-${cleanTeamCode}-${mtId}-${subIdx}-${miniIdx}-${micIndex}`;
         }
 
         const cleanMicTitle = title.toLowerCase().trim();
-        const existingMicIndex = parentSubtask.microtasks.findIndex(
+        const existingMicIndex = parentMinitask.microtasks.findIndex(
           (m) => (m.title && m.title.toLowerCase().trim() === cleanMicTitle) ||
                  (m.key && explicitKey && m.key.toUpperCase().trim() === explicitKey.toUpperCase().trim())
         );
@@ -982,7 +1117,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         let micAction = 'CREATE';
         if (existingMicIndex >= 0) {
           micAction = 'UPDATE';
-          const existingMic = parentSubtask.microtasks[existingMicIndex];
+          const existingMic = parentMinitask.microtasks[existingMicIndex];
           existingMic.title = title;
           if (description) existingMic.description = description;
           existingMic.status = status;
@@ -1011,14 +1146,15 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             createdBy: userId,
             createdAt: new Date()
           };
-          parentSubtask.microtasks.push(micPayload);
+          parentMinitask.microtasks.push(micPayload);
         }
 
         displayTasks.push({
           isMicrotask: true,
+          isMinitask: false,
           isSubtask: false,
-          parentKey: parentSubtask.key,
-          parentTitle: parentSubtask.title,
+          parentKey: parentMinitask.key,
+          parentTitle: parentMinitask.title,
           action: micAction,
           isValidTeam: true,
           key: micKey,
@@ -1043,6 +1179,259 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         return; // Microtask row processed!
       } else {
         warnings.push(`Row ${index + 2}: No upper Subtask found for microtask "${title}". Created as Subtask.`);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CASE A0: THIS ROW IS A MINI-TASK (Level 5 / Level 3 in DB)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isRowMinitask) {
+      const targetMainTitle = level3Val || (lastMainTask ? lastMainTask.title : '');
+      const targetSubTitle = level4Val || (lastSubtask ? lastSubtask.title : '');
+
+      let parentMain = null;
+      if (targetMainTitle) {
+        const cleanMT = targetMainTitle.toLowerCase().trim();
+        parentMain = mainTasksByTitle.get(cleanMT) || (lastMainTask?.title?.toLowerCase().trim() === cleanMT ? lastMainTask : null);
+      } else if (lastMainTask) {
+        parentMain = lastMainTask;
+      }
+
+      // If parentMain doesn't exist yet in prepared batch, wrap existing or auto-create it
+      if (!parentMain && targetMainTitle) {
+        let existingMain = existingTaskByTitle.get(targetMainTitle.toLowerCase().trim());
+        const isUpdate = Boolean(existingMain);
+        let taskNumber = null;
+        let key = '';
+
+        if (isUpdate) {
+          updateTasksCount++;
+          taskNumber = existingMain.taskNumber;
+          key = existingMain.key;
+        } else {
+          newTasksCount++;
+          taskNumber = runningCounter++;
+          const mainTeamCode = resolveTeamCode(team || options.defaultTeam, project.teams, workspaceTeams) || 'GEN';
+          key = `${projKey}-MT-${mainTeamCode}-${taskNumber}`;
+        }
+
+        const effectiveSprint = level2Val || sprintName || (existingMain ? existingMain.sprint : null) || options.defaultSprintName || 'Backlog';
+
+        parentMain = {
+          action: isUpdate ? 'UPDATE' : 'CREATE',
+          isValidTeam: true,
+          existingTaskId: isUpdate ? existingMain._id : null,
+          taskNumber,
+          key,
+          title: targetMainTitle,
+          description: existingMain ? existingMain.description : '',
+          issueType: 'TASK',
+          priority: existingMain ? existingMain.priority : priority,
+          status: existingMain ? existingMain.status : 'TODO',
+          storyPoints: 0,
+          team: existingMain ? existingMain.team : (team || options.defaultTeam || 'General'),
+          assigneeId: existingMain ? existingMain.assigneeId : (matchedAssignee ? matchedAssignee._id : null),
+          assigneeName: existingMain ? (existingMain.assigneeId?.name || '') : (matchedAssignee ? matchedAssignee.name : ''),
+          assigneeEmail: existingMain ? (existingMain.assigneeId?.email || '') : (matchedAssignee ? matchedAssignee.email : ''),
+          startDate: taskStartDate,
+          dueDate: taskDueDate,
+          durationDays: 7,
+          dependencies: '',
+          isMilestone: false,
+          phase: effectiveSprint,
+          sprintName: effectiveSprint,
+          sprintIndex: effectiveSprint,
+          subtasks: existingMain?.subtasks ? JSON.parse(JSON.stringify(existingMain.subtasks)) : []
+        };
+
+        preparedMainTasks.push(parentMain);
+        mainTasksByTitle.set(targetMainTitle.toLowerCase().trim(), parentMain);
+        if (key) mainTasksByKey.set(key.toUpperCase().trim(), parentMain);
+
+        displayTasks.push({
+          action: parentMain.action,
+          type: 'Main Task',
+          key: parentMain.key,
+          title: parentMain.title,
+          parentKey: '',
+          parentTitle: '',
+          team: parentMain.team,
+          assignee: parentMain.assigneeName || 'Unassigned',
+          phase: parentMain.sprintName,
+          sprintName: parentMain.sprintName,
+          startDate: parentMain.startDate,
+          dueDate: parentMain.dueDate,
+          durationDays: parentMain.durationDays,
+          priority: parentMain.priority,
+          status: parentMain.status,
+          subtasksCount: parentMain.subtasks.length
+        });
+      }
+
+      if (parentMain) {
+        lastMainTask = parentMain;
+      }
+
+      let parentSubtask = null;
+      if (parentMain && Array.isArray(parentMain.subtasks)) {
+        if (targetSubTitle) {
+          const cleanST = targetSubTitle.toLowerCase().trim();
+          parentSubtask = parentMain.subtasks.find(st => (st.title && st.title.toLowerCase().trim() === cleanST)) || null;
+        } else if (lastSubtask && parentMain.subtasks.includes(lastSubtask)) {
+          parentSubtask = lastSubtask;
+        } else if (parentMain.subtasks.length > 0) {
+          parentSubtask = parentMain.subtasks[parentMain.subtasks.length - 1];
+        }
+      }
+
+      // If parentSubtask still null but targetSubTitle exists, create Subtask under parentMain
+      if (!parentSubtask && parentMain && targetSubTitle) {
+        const cleanTeamCode = resolveTeamCode(team || parentMain.team, project.teams, workspaceTeams) || 'GEN';
+        const subIdx = (parentMain.subtasks?.length || 0) + 1;
+        const mtId = parentMain.taskNumber || 1;
+        const subKey = `${projKey}-ST-${cleanTeamCode}-${mtId}-${subIdx}`;
+
+        parentSubtask = {
+          _id: new mongoose.Types.ObjectId(),
+          key: subKey,
+          title: targetSubTitle,
+          description: '',
+          status: 'TODO',
+          isCompleted: false,
+          startDate: taskStartDate,
+          dueDate: taskDueDate,
+          assigneeId: null,
+          assigneeName: null,
+          assigneeEmail: null,
+          minitasks: []
+        };
+        if (!parentMain.subtasks) parentMain.subtasks = [];
+        parentMain.subtasks.push(parentSubtask);
+        subtasksCount++;
+
+      }
+
+      if (parentSubtask) {
+        lastSubtask = parentSubtask;
+
+        const subtaskDisplayKey = parentSubtask.key || `${parentMain?.key || ''}-${parentSubtask.title}`;
+        if (!addedSubtaskKeysToDisplay.has(subtaskDisplayKey)) {
+          addedSubtaskKeysToDisplay.add(subtaskDisplayKey);
+          displayTasks.push({
+            isSubtask: true,
+            parentKey: parentMain?.key || '',
+            parentTitle: parentMain?.title || '',
+            action: parentSubtask.action || 'CREATE',
+            isValidTeam: true,
+            key: parentSubtask.key || '—',
+            title: parentSubtask.title,
+            description: parentSubtask.description || '',
+            team: parentSubtask.team || parentMain?.team || 'General',
+            assigneeName: parentSubtask.assigneeName || 'Unassigned',
+            assigneeEmail: parentSubtask.assigneeEmail || null,
+            isTeamMember: false,
+            phase: parentMain?.phase || sprintName,
+            sprintName: parentMain?.sprintName || sprintName,
+            startDate: parentSubtask.startDate || taskStartDate,
+            dueDate: parentSubtask.dueDate || taskDueDate,
+            durationDays: 7,
+            priority: 'MEDIUM',
+            status: parentSubtask.status || 'TODO'
+          });
+        }
+
+        if (!parentSubtask.minitasks) parentSubtask.minitasks = [];
+        minitasksCount++;
+
+        // Clear subtask assignee when mini-tasks exist
+        parentSubtask.assigneeId = null;
+        parentSubtask.assigneeName = null;
+        parentSubtask.assigneeEmail = null;
+
+        const miniIndex = parentSubtask.minitasks.length + 1;
+        const mtId = parentMain?.taskNumber || 1;
+        const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
+        const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
+        let miniKey = explicitKey;
+        if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-\d+-\d+-\d+$/.test(miniKey)) {
+          miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtId}-${subIdx}-${miniIndex}`;
+        }
+
+        const cleanMiniTitle = title.toLowerCase().trim();
+        const existingMiniIndex = parentSubtask.minitasks.findIndex(
+          (m) => (m.title && m.title.toLowerCase().trim() === cleanMiniTitle) ||
+                 (m.key && explicitKey && m.key.toUpperCase().trim() === explicitKey.toUpperCase().trim())
+        );
+
+        let miniPayload = null;
+        let miniAction = 'CREATE';
+        if (existingMiniIndex >= 0) {
+          miniAction = 'UPDATE';
+          const existingMini = parentSubtask.minitasks[existingMiniIndex];
+          existingMini.title = title;
+          if (description) existingMini.description = description;
+          existingMini.status = status;
+          existingMini.isCompleted = (status === 'DONE');
+          existingMini.startDate = taskStartDate;
+          existingMini.dueDate = taskDueDate;
+          if (matchedAssignee) {
+            existingMini.assigneeId = matchedAssignee._id;
+            existingMini.assigneeName = matchedAssignee.name;
+            existingMini.assigneeEmail = matchedAssignee.email;
+          }
+          miniPayload = existingMini;
+        } else {
+          miniPayload = {
+            _id: new mongoose.Types.ObjectId(),
+            key: miniKey,
+            title,
+            description,
+            status,
+            isCompleted: (status === 'DONE'),
+            startDate: taskStartDate,
+            dueDate: taskDueDate,
+            assigneeId: matchedAssignee ? matchedAssignee._id : null,
+            assigneeName: matchedAssignee ? matchedAssignee.name : (rawAssignee || ''),
+            assigneeEmail: matchedAssignee ? matchedAssignee.email : '',
+            createdBy: userId,
+            createdAt: new Date(),
+            microtasks: []
+          };
+          parentSubtask.minitasks.push(miniPayload);
+        }
+
+        lastMinitask = miniPayload;
+
+        displayTasks.push({
+          isMinitask: true,
+          isMicrotask: false,
+          isSubtask: false,
+          parentKey: parentSubtask.key,
+          parentTitle: parentSubtask.title,
+          action: miniAction,
+          isValidTeam: true,
+          key: miniKey,
+          title,
+          description,
+          team: team || parentMain?.team || 'General',
+          assigneeName: matchedAssignee ? matchedAssignee.name : (rawAssignee || null),
+          assigneeEmail: matchedAssignee ? matchedAssignee.email : null,
+          isTeamMember,
+          phase: parentMain?.phase || sprintName,
+          sprintName: parentMain?.sprintName || sprintName,
+          startDate: taskStartDate,
+          dueDate: taskDueDate,
+          durationDays: calculatedDuration,
+          dependencies: dependenciesRaw,
+          isMilestone,
+          priority,
+          status,
+          storyPoints: 0
+        });
+
+        return; // Mini-task row processed!
+      } else {
+        warnings.push(`Row ${index + 2}: No upper Subtask found for mini-task "${title}". Created as Subtask.`);
       }
     }
 
@@ -1232,7 +1621,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             assigneeEmail: matchedAssignee ? matchedAssignee.email : '',
             createdBy: userId,
             createdAt: new Date(),
-            microtasks: []
+            minitasks: []
           };
           if (isSubValidTeam) {
             parentTask.subtasks.push(subtaskPayload);
@@ -1271,6 +1660,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         });
 
         lastSubtask = subtaskPayload;
+        lastMinitask = null;
         return; // Subtask row processed!
       } else {
         warnings.push(`Row ${index + 2}: No upper Main Task found for subtask "${title}". Created as standalone Main Task.`);
@@ -1285,6 +1675,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     if (alreadyInBatch) {
       lastMainTask = alreadyInBatch;
       lastSubtask = null;
+      lastMinitask = null;
       return;
     }
 
@@ -1368,7 +1759,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           assigneeId: mainTaskObj.assigneeId,
           createdBy: userId,
           createdAt: new Date(),
-          microtasks: []
+          minitasks: []
         });
 
         displayTasks.push({
@@ -1399,6 +1790,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     // Set as the upper main task for any subsequent subtask rows
     lastMainTask = mainTaskObj;
     lastSubtask = null;
+    lastMinitask = null;
     mainTasksByTitle.set(title.toLowerCase().trim(), mainTaskObj);
     if (key) mainTasksByKey.set(key.toUpperCase().trim(), mainTaskObj);
 
@@ -1416,17 +1808,18 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     isTeamLeadUser,
     forcedLeadTeamName,
     preparedSprints,
-    preparedTasks: displayTasks, // All tasks + subtasks + microtasks with timeline metadata for preview table
-    actualMainTasks: preparedMainTasks, // Main tasks with embedded subtasks & microtasks for database write
+    preparedTasks: displayTasks, // All tasks + subtasks + minitasks + microtasks with timeline metadata for preview table
+    actualMainTasks: preparedMainTasks, // Main tasks with embedded subtasks, minitasks & microtasks for database write
     summary: {
       totalSprints: preparedSprints.length,
       totalTasks: newTasksCount + updateTasksCount,
-      totalSubtasks: subtasksCount,
-      totalMicrotasks: microtasksCount,
+      totalSubtasks: preparedMainTasks.reduce((acc, m) => acc + (m.subtasks?.length || 0), 0),
+      totalMinitasks: preparedMainTasks.reduce((acc, m) => acc + (m.subtasks || []).reduce((subAcc, s) => subAcc + (s.minitasks?.length || 0), 0), 0),
+      totalMicrotasks: preparedMainTasks.reduce((acc, m) => acc + (m.subtasks || []).reduce((subAcc, s) => subAcc + (s.minitasks || []).reduce((miniAcc, mi) => miniAcc + (mi.microtasks?.length || 0), 0), 0), 0),
       newTasksCount,
       updateTasksCount,
       invalidTasksCount,
-      validTasksCount: newTasksCount + updateTasksCount + subtasksCount + microtasksCount,
+      validTasksCount: newTasksCount + updateTasksCount + subtasksCount + minitasksCount + microtasksCount,
       allowedProjectTeams: Array.from(new Set([...(project.teams || []), ...(workspaceTeams || [])].map(t => t.name).filter(Boolean))),
       defaultCycleDays,
       warnings
@@ -1572,12 +1965,23 @@ const executeExcelImport = asyncHandler(async (req, res) => {
         updateFields.sprint = sprintDoc.name;
       }
 
-      // Ensure subtasks with microtasks have no subtask-level assignee
+      // Ensure subtasks with minitasks/microtasks have proper assignee hierarchy
       if (Array.isArray(updateFields.subtasks)) {
-        updateFields.subtasks = updateFields.subtasks.map(s => ({
-          ...s,
-          assigneeId: (s.microtasks && s.microtasks.length > 0) ? null : (s.assigneeId || null)
-        }));
+        updateFields.subtasks = updateFields.subtasks.map(s => {
+          const hasMinis = Array.isArray(s.minitasks) && s.minitasks.length > 0;
+          return {
+            ...s,
+            assigneeId: hasMinis ? null : (s.assigneeId || null),
+            minitasks: (s.minitasks || []).map(m => {
+              const hasMicros = Array.isArray(m.microtasks) && m.microtasks.length > 0;
+              return {
+                ...m,
+                assigneeId: hasMicros ? null : (m.assigneeId || null),
+                microtasks: m.microtasks || []
+              };
+            })
+          };
+        });
       }
 
       const updated = await Task.findByIdAndUpdate(taskData.existingTaskId, updateFields, { new: true });
@@ -1592,14 +1996,25 @@ const executeExcelImport = asyncHandler(async (req, res) => {
         });
       }
     } else {
-      // Create new main task with its subtasks
+      // Create new main task with its subtasks, minitasks & microtasks
       const hasSubtasks = taskData.subtasks && taskData.subtasks.length > 0;
       const cleanSubtasks = (taskData.subtasks || [])
         .filter(s => s.isValidTeam !== false)
-        .map(s => ({
-          ...s,
-          assigneeId: (s.microtasks && s.microtasks.length > 0) ? null : (s.assigneeId || null)
-        }));
+        .map(s => {
+          const hasMinis = Array.isArray(s.minitasks) && s.minitasks.length > 0;
+          return {
+            ...s,
+            assigneeId: hasMinis ? null : (s.assigneeId || null),
+            minitasks: (s.minitasks || []).map(m => {
+              const hasMicros = Array.isArray(m.microtasks) && m.microtasks.length > 0;
+              return {
+                ...m,
+                assigneeId: hasMicros ? null : (m.assigneeId || null),
+                microtasks: m.microtasks || []
+              };
+            })
+          };
+        });
 
       const taskPayload = {
         key: taskData.key,
@@ -1723,9 +2138,9 @@ const executeExcelImport = asyncHandler(async (req, res) => {
     await CacheService.delPattern(`kanban:${projectId}*`);
   } catch (_) {}
 
-  const validSubtasksCount = processed.actualSubtasks
-    ? processed.actualSubtasks.filter(s => s.isValidTeam !== false).length
-    : 0;
+  const validSubtasksCount = processed.summary?.totalSubtasks ?? (
+    processed.actualSubtasks ? processed.actualSubtasks.filter(s => s.isValidTeam !== false).length : 0
+  );
 
   // Socket notification to all project members
   emitToProject(projectId, 'tasks:imported', {
@@ -1873,15 +2288,17 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
     lookupSheet.getCell(`C${idx + 2}`).value = a;
   });
 
-  // Column headers matching 5-level project hierarchy
+  // Column headers matching user-specified hierarchy:
+  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks
   worksheet.columns = [
     { header: 'S.No', key: 'sNo', width: 10 },
-    { header: 'Level 1', key: 'level1', width: 22 }, // Project Name
-    { header: 'Level 2', key: 'level2', width: 24 }, // Sprint Name
-    { header: 'Level 3', key: 'level3', width: 34 }, // Main Task
-    { header: 'Level 4 – Development Tasks', key: 'level4', width: 38 }, // Subtask
-    { header: 'Level 5 – Micro Tasks', key: 'level5', width: 38 }, // Microtask
-    { header: 'Task Description', key: 'desc', width: 44 }, // Right after Micro Tasks
+    { header: 'Project', key: 'project', width: 24 },
+    { header: 'Sprint', key: 'sprint', width: 24 },
+    { header: 'Level 1 – Main Task', key: 'level1', width: 34 },
+    { header: 'Level 2 – Subtask', key: 'level2', width: 38 },
+    { header: 'Level 3 – Mini Tasks', key: 'level3', width: 38 },
+    { header: 'Level 4 – Micro Tasks', key: 'level4', width: 38 },
+    { header: 'Task Description', key: 'desc', width: 44 },
     { header: 'Duration (Days)', key: 'duration', width: 16 },
     { header: 'Priority', key: 'priority', width: 14 },
     { header: 'Status', key: 'status', width: 16 },
@@ -1900,20 +2317,22 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   worksheet.getRow(1).height = 24;
   worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
 
-  // Starter rows tailored to 5-level hierarchy
-  const firstSprint = sprintOptions[0] || 'Sprint 1';
+  // Starter rows pre-filled with real Project Name and Sprint Name
+  const activeSprint = sprints.find(s => s.status === 'ACTIVE');
+  const firstSprint = activeSprint?.name || sprintOptions[0] || 'Sprint 1';
   const firstTeam = teamOptions[0] || '';
   const firstAssignee = assigneeOptions[0] || '';
 
   worksheet.addRow({
     sNo: 1,
-    level1: project.name,
-    level2: firstSprint,
-    level3: 'Admin Login',
-    level4: 'Design admin login UI',
-    level5: '',
-    desc: 'Design responsive login UI',
-    duration: 3,
+    project: project.name,
+    sprint: firstSprint,
+    level1: 'Admin Login',
+    level2: 'Design admin login UI',
+    level3: 'Figma Mockup & Specs',
+    level4: 'Create responsive mockup',
+    desc: 'Design responsive login UI in Figma',
+    duration: 2,
     priority: 'HIGH',
     status: 'TODO',
     team: firstTeam,
@@ -1923,11 +2342,12 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
 
   worksheet.addRow({
     sNo: 2,
-    level1: project.name,
-    level2: firstSprint,
-    level3: 'Admin Login',
-    level4: 'Develop login authentication API',
-    level5: 'Write unit tests for JWT validator',
+    project: project.name,
+    sprint: firstSprint,
+    level1: 'Admin Login',
+    level2: 'Develop login authentication API',
+    level3: 'JWT Auth Module',
+    level4: 'Write unit tests for JWT validator',
     desc: 'Check edge cases and token expiry',
     duration: 1,
     priority: 'MEDIUM',
@@ -1939,12 +2359,13 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
 
   worksheet.addRow({
     sNo: 3,
-    level1: project.name,
-    level2: firstSprint,
-    level3: 'Dashboard',
-    level4: 'Design dashboard UI and navigation',
-    level5: '',
-    desc: 'Primary dashboard overview',
+    project: project.name,
+    sprint: firstSprint,
+    level1: 'Dashboard',
+    level2: 'Design dashboard UI and navigation',
+    level3: 'Navigation sidebar',
+    level4: '',
+    desc: 'Primary dashboard overview and navigation',
     duration: 3,
     priority: 'MEDIUM',
     status: 'TODO',
@@ -1959,7 +2380,7 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   const assigneeLastRow = Math.max(assigneeOptions.length + 1, 2);
 
   for (let r = 2; r <= 500; r++) {
-    // 1. Level 2 (Sprint) dropdown from project's real sprints (Col C)
+    // 1. Sprint dropdown from project's real sprints (Col C)
     if (sprintOptions.length > 0) {
       worksheet.getCell(`C${r}`).dataValidation = {
         type: 'list',
@@ -1968,32 +2389,32 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
       };
     }
 
-    // 2. Priority dropdown (Col I)
-    worksheet.getCell(`I${r}`).dataValidation = {
+    // 2. Priority dropdown (Col J)
+    worksheet.getCell(`J${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"LOW,MEDIUM,HIGH,URGENT"']
     };
 
-    // 3. Status dropdown (Col J)
-    worksheet.getCell(`J${r}`).dataValidation = {
+    // 3. Status dropdown (Col K)
+    worksheet.getCell(`K${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"TODO,IN_PROGRESS,IN_REVIEW,DONE,BACKLOG"']
     };
 
-    // 4. Team dropdown from project's real teams (Col K)
+    // 4. Team dropdown from project's real teams (Col L)
     if (teamOptions.length > 0) {
-      worksheet.getCell(`K${r}`).dataValidation = {
+      worksheet.getCell(`L${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$B$2:$B$${teamLastRow}`]
       };
     }
 
-    // 5. Assignee dropdown from project's real members (Col L)
+    // 5. Assignee dropdown from project's real members (Col M)
     if (assigneeOptions.length > 0) {
-      worksheet.getCell(`L${r}`).dataValidation = {
+      worksheet.getCell(`M${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$C$2:$C$${assigneeLastRow}`]
@@ -2011,14 +2432,34 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   guideSheet.getRow(1).font = { bold: true };
 
   guideSheet.addRow({
-    col: 'Phase / Milestone',
-    req: 'Optional',
-    desc: `Select from project sprints dropdown: ${sprintOptions.slice(0, 5).join(', ')}${sprintOptions.length > 5 ? '...' : ''}. If blank, automatically routes to selected Sprint or Backlog.`
+    col: 'Project',
+    req: 'Required',
+    desc: `Project Name: ${project.name}`
   });
   guideSheet.addRow({
-    col: 'Task Type',
-    req: 'Required',
-    desc: 'Select "Main Task", "Subtask", or "Microtask". A Subtask attaches to the Main Task above it. A Microtask attaches to the Subtask above it!'
+    col: 'Sprint',
+    req: 'Optional',
+    desc: `Select from project sprints dropdown: ${sprintOptions.slice(0, 5).join(', ')}${sprintOptions.length > 5 ? '...' : ''}. If blank, automatically routes to active Sprint or Backlog.`
+  });
+  guideSheet.addRow({
+    col: 'Level 1 – Main Task',
+    req: 'Required for Main Task',
+    desc: 'Primary deliverable / User Story or feature name.'
+  });
+  guideSheet.addRow({
+    col: 'Level 2 – Subtask',
+    req: 'Optional',
+    desc: 'Development Subtask under the preceding Main Task.'
+  });
+  guideSheet.addRow({
+    col: 'Level 3 – Mini Tasks',
+    req: 'Optional',
+    desc: 'Mini-task under the preceding Subtask.'
+  });
+  guideSheet.addRow({
+    col: 'Level 4 – Micro Tasks',
+    req: 'Optional',
+    desc: 'Micro-task checklist item under the preceding Mini-task.'
   });
   guideSheet.addRow({
     col: 'Task Key',
@@ -2125,6 +2566,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
   const tasks = await Task.find(query)
     .populate('assigneeId', 'name email')
     .populate('subtasks.assigneeId', 'name email')
+    .populate('subtasks.minitasks.assigneeId', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email')
     .populate('subtasks.microtasks.assigneeId', 'name email')
     .populate('linkedIssues.targetTaskId', 'key title')
     .sort({ order: 1, createdAt: 1 })
@@ -2242,15 +2685,17 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
     lookupSheet.getCell(`C${idx + 2}`).value = a;
   });
 
-  // Main worksheet column headers matching 5-level project hierarchy
+  // Main worksheet column headers matching user-specified hierarchy:
+  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks
   worksheet.columns = [
     { header: 'S.No', key: 'sNo', width: 10 },
-    { header: 'Level 1', key: 'level1', width: 22 }, // Project Name
-    { header: 'Level 2', key: 'level2', width: 24 }, // Sprint Name
-    { header: 'Level 3', key: 'level3', width: 34 }, // Main Task
-    { header: 'Level 4 – Development Tasks', key: 'level4', width: 38 }, // Subtask
-    { header: 'Level 5 – Micro Tasks', key: 'level5', width: 38 }, // Microtask
-    { header: 'Task Description', key: 'desc', width: 44 }, // Right after Micro Tasks
+    { header: 'Project', key: 'project', width: 24 },
+    { header: 'Sprint', key: 'sprint', width: 24 },
+    { header: 'Level 1 – Main Task', key: 'level1', width: 34 },
+    { header: 'Level 2 – Subtask', key: 'level2', width: 38 },
+    { header: 'Level 3 – Mini Tasks', key: 'level3', width: 38 },
+    { header: 'Level 4 – Micro Tasks', key: 'level4', width: 38 },
+    { header: 'Task Description', key: 'desc', width: 44 },
     { header: 'Duration (Days)', key: 'duration', width: 16 },
     { header: 'Priority', key: 'priority', width: 14 },
     { header: 'Status', key: 'status', width: 16 },
@@ -2272,125 +2717,198 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
   let currentMainSeq = startingSerial - 1;
   let globalRowSNo = startingSerial;
 
-  tasks.forEach((task) => {
-    const phaseName = task.sprintId && sprintMap.has(task.sprintId.toString())
-      ? sprintMap.get(task.sprintId.toString())
-      : (task.sprint || task.epic || 'Backlog');
+  // If no tasks exist in the project or selected scope, pre-fill row 1 with project name and sprint name
+  if (!tasks || tasks.length === 0) {
+    const activeSprint = sprints.find(s => s.status === 'ACTIVE');
+    const defaultSprintName = sprintId && sprintMap.has(sprintId)
+      ? sprintMap.get(sprintId)
+      : (activeSprint?.name || sprintName || sprintOptions[0] || 'Sprint 1');
+    const firstTeam = (team && team !== 'ALL') ? team : (teamOptions[0] || '');
 
-    let durationDays = 7;
-    if (task.startDate && task.dueDate) {
-      const s = new Date(task.startDate);
-      const e = new Date(task.dueDate);
-      if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-        durationDays = Math.max(1, Math.round((e - s) / (1000 * 60 * 60 * 24)));
+    worksheet.addRow({
+      sNo: 1,
+      project: project.name,
+      sprint: defaultSprintName,
+      level1: '',
+      level2: '',
+      level3: '',
+      level4: '',
+      desc: '',
+      duration: 1,
+      priority: 'MEDIUM',
+      status: 'TODO',
+      team: firstTeam,
+      assignee: '',
+      key: ''
+    });
+    totalRowsAdded = 1;
+  } else {
+    tasks.forEach((task) => {
+      const phaseName = task.sprintId && sprintMap.has(task.sprintId.toString())
+        ? sprintMap.get(task.sprintId.toString())
+        : (task.sprint || task.epic || 'Backlog');
+
+      let durationDays = 7;
+      if (task.startDate && task.dueDate) {
+        const s = new Date(task.startDate);
+        const e = new Date(task.dueDate);
+        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+          durationDays = Math.max(1, Math.round((e - s) / (1000 * 60 * 60 * 24)));
+        }
+      } else if (task.customFields?.durationDays) {
+        durationDays = task.customFields.durationDays;
       }
-    } else if (task.customFields?.durationDays) {
-      durationDays = task.customFields.durationDays;
-    }
 
-    const projKey = (project.key || 'TASK').toUpperCase().trim();
-    const teamCode = resolveTeamCode(task.team, project.teams) || 'GEN';
-    currentMainSeq++;
-    const taskNum = currentMainSeq;
+      const projKey = (project.key || 'TASK').toUpperCase().trim();
+      const teamCode = resolveTeamCode(task.team, project.teams) || 'GEN';
+      currentMainSeq++;
+      const taskNum = currentMainSeq;
 
-    let mainKey = task.key;
-    if (!mainKey || !/^[^-]+-MT-[A-Z0-9]+-\d+$/.test(mainKey)) {
-      mainKey = `${projKey}-MT-${teamCode}-${taskNum}`;
-    }
+      let mainKey = task.key;
+      if (!mainKey || !/^[^-]+-MT-[A-Z0-9]+-\d+$/.test(mainKey)) {
+        mainKey = `${projKey}-MT-${teamCode}-${taskNum}`;
+      }
 
-    const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
+      const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
 
-    if (!hasSubtasks) {
-      worksheet.addRow({
-        sNo: globalRowSNo++,
-        level1: project.name,
-        level2: phaseName,
-        level3: task.title,
-        level4: '',
-        level5: '',
-        desc: task.description || '',
-        duration: durationDays,
-        priority: task.priority || 'MEDIUM',
-        status: task.status || 'TODO',
-        team: task.team || '',
-        assignee: formatAssignee(task.assigneeId),
-        key: mainKey
-      });
-      totalRowsAdded++;
-    } else {
-      task.subtasks.forEach((st, sIdx) => {
-        let stDuration = 3;
-        if (st.startDate && st.dueDate) {
-          const s = new Date(st.startDate);
-          const e = new Date(st.dueDate);
-          if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-            stDuration = Math.max(1, Math.round((e - s) / (1000 * 60 * 60 * 24)));
+      if (!hasSubtasks) {
+        worksheet.addRow({
+          sNo: globalRowSNo++,
+          project: project.name,
+          sprint: phaseName,
+          level1: task.title,
+          level2: '',
+          level3: '',
+          level4: '',
+          desc: task.description || '',
+          duration: durationDays,
+          priority: task.priority || 'MEDIUM',
+          status: task.status || 'TODO',
+          team: task.team || '',
+          assignee: formatAssignee(task.assigneeId),
+          key: mainKey
+        });
+        totalRowsAdded++;
+      } else {
+        task.subtasks.forEach((st, sIdx) => {
+          let stDuration = 3;
+          if (st.startDate && st.dueDate) {
+            const s = new Date(st.startDate);
+            const e = new Date(st.dueDate);
+            if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+              stDuration = Math.max(1, Math.round((e - s) / (1000 * 60 * 60 * 24)));
+            }
           }
-        }
 
-        const subtaskIndex = sIdx + 1;
-        let subKey = st.key;
-        if (!subKey || !/^[^-]+-ST-[A-Z0-9]+-\d+-\d+$/.test(subKey)) {
-          subKey = `${projKey}-ST-${teamCode}-${taskNum}-${subtaskIndex}`;
-        }
+          const subtaskIndex = sIdx + 1;
+          let subKey = st.key;
+          if (!subKey || !/^[^-]+-ST-[A-Z0-9]+-\d+-\d+$/.test(subKey)) {
+            subKey = `${projKey}-ST-${teamCode}-${taskNum}-${subtaskIndex}`;
+          }
 
-        const hasMicrotasks = Array.isArray(st.microtasks) && st.microtasks.length > 0;
+          const miniList = (Array.isArray(st.minitasks) && st.minitasks.length > 0)
+            ? st.minitasks
+            : (Array.isArray(st.microtasks) ? st.microtasks : []);
+          const hasMinis = miniList.length > 0;
 
-        if (!hasMicrotasks) {
-          worksheet.addRow({
-            sNo: globalRowSNo++,
-            level1: project.name,
-            level2: phaseName,
-            level3: task.title,
-            level4: st.title,
-            level5: '',
-            desc: st.description || '',
-            duration: stDuration,
-            priority: st.priority || task.priority || 'MEDIUM',
-            status: st.status || (st.isCompleted ? 'DONE' : 'TODO'),
-            team: task.team || '',
-            assignee: formatAssignee(st.assigneeId) || st.assigneeName || '',
-            key: subKey
-          });
-          totalRowsAdded++;
-        } else {
-          st.microtasks.forEach((mic, mIdx) => {
-            let micDuration = 1;
-            if (mic.startDate && mic.dueDate) {
-              const ms = new Date(mic.startDate);
-              const me = new Date(mic.dueDate);
-              if (!isNaN(ms.getTime()) && !isNaN(me.getTime()) && me >= ms) {
-                micDuration = Math.max(1, Math.round((me - ms) / (1000 * 60 * 60 * 24)));
-              }
-            }
-
-            const micIndex = mIdx + 1;
-            let micKey = mic.key;
-            if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+$/.test(micKey)) {
-              micKey = `${projKey}-MIC-${teamCode}-${taskNum}-${subtaskIndex}-${micIndex}`;
-            }
-
+          if (!hasMinis) {
             worksheet.addRow({
               sNo: globalRowSNo++,
-              level1: project.name,
-              level2: phaseName,
-              level3: task.title,
-              level4: st.title,
-              level5: mic.title,
-              desc: mic.description || '',
-              duration: micDuration,
-              priority: mic.priority || task.priority || 'MEDIUM',
-              status: mic.status || (mic.isCompleted ? 'DONE' : 'TODO'),
+              project: project.name,
+              sprint: phaseName,
+              level1: task.title,
+              level2: st.title,
+              level3: '',
+              level4: '',
+              desc: st.description || '',
+              duration: stDuration,
+              priority: st.priority || task.priority || 'MEDIUM',
+              status: st.status || (st.isCompleted ? 'DONE' : 'TODO'),
               team: task.team || '',
-              assignee: formatAssignee(mic.assigneeId) || '',
-              key: micKey
+              assignee: formatAssignee(st.assigneeId) || st.assigneeName || '',
+              key: subKey
             });
             totalRowsAdded++;
-          });
-        }
-      });
-    }
-  });
+          } else {
+            miniList.forEach((mini, mIdx) => {
+              let miniDuration = 1;
+              if (mini.startDate && mini.dueDate) {
+                const ms = new Date(mini.startDate);
+                const me = new Date(mini.dueDate);
+                if (!isNaN(ms.getTime()) && !isNaN(me.getTime()) && me >= ms) {
+                  miniDuration = Math.max(1, Math.round((me - ms) / (1000 * 60 * 60 * 24)));
+                }
+              }
+
+              const miniIndex = mIdx + 1;
+              let miniKey = mini.key;
+              if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-\d+-\d+-\d+$/.test(miniKey)) {
+                miniKey = `${projKey}-MIN-${teamCode}-${taskNum}-${subtaskIndex}-${miniIndex}`;
+              }
+
+              const microList = Array.isArray(mini.microtasks) ? mini.microtasks : [];
+              const hasMicros = microList.length > 0;
+
+              if (!hasMicros) {
+                worksheet.addRow({
+                  sNo: globalRowSNo++,
+                  project: project.name,
+                  sprint: phaseName,
+                  level1: task.title,
+                  level2: st.title,
+                  level3: mini.title,
+                  level4: '',
+                  desc: mini.description || '',
+                  duration: miniDuration,
+                  priority: mini.priority || task.priority || 'MEDIUM',
+                  status: mini.status || (mini.isCompleted ? 'DONE' : 'TODO'),
+                  team: task.team || '',
+                  assignee: formatAssignee(mini.assigneeId) || '',
+                  key: miniKey
+                });
+                totalRowsAdded++;
+              } else {
+                microList.forEach((mic, micIdx) => {
+                  let micDuration = 1;
+                  if (mic.startDate && mic.dueDate) {
+                    const ms = new Date(mic.startDate);
+                    const me = new Date(mic.dueDate);
+                    if (!isNaN(ms.getTime()) && !isNaN(me.getTime()) && me >= ms) {
+                      micDuration = Math.max(1, Math.round((me - ms) / (1000 * 60 * 60 * 24)));
+                    }
+                  }
+
+                  const microIndex = micIdx + 1;
+                  let micKey = mic.key;
+                  if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+-\d+$/.test(micKey)) {
+                    micKey = `${projKey}-MIC-${teamCode}-${taskNum}-${subtaskIndex}-${miniIndex}-${microIndex}`;
+                  }
+
+                  worksheet.addRow({
+                    sNo: globalRowSNo++,
+                    project: project.name,
+                    sprint: phaseName,
+                    level1: task.title,
+                    level2: st.title,
+                    level3: mini.title,
+                    level4: mic.title,
+                    desc: mic.description || '',
+                    duration: micDuration,
+                    priority: mic.priority || task.priority || 'MEDIUM',
+                    status: mic.status || (mic.isCompleted ? 'DONE' : 'TODO'),
+                    team: task.team || '',
+                    assignee: formatAssignee(mic.assigneeId) || '',
+                    key: micKey
+                  });
+                  totalRowsAdded++;
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+  }
 
   // Apply interactive Data Validations
   const maxRow = Math.max(totalRowsAdded + 100, 500);
@@ -2407,29 +2925,29 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
         formulae: [`Project_Dropdown_Data!$A$2:$A$${sprintLastRow}`]
       };
     }
-    // 2. Priority dropdown (Col I)
-    worksheet.getCell(`I${r}`).dataValidation = {
+    // 2. Priority dropdown (Col J)
+    worksheet.getCell(`J${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"LOW,MEDIUM,HIGH,URGENT"']
     };
-    // 3. Status dropdown (Col J)
-    worksheet.getCell(`J${r}`).dataValidation = {
+    // 3. Status dropdown (Col K)
+    worksheet.getCell(`K${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"TODO,IN_PROGRESS,IN_REVIEW,DONE,BACKLOG"']
     };
-    // 4. Team dropdown (Col K)
+    // 4. Team dropdown (Col L)
     if (teamOptions.length > 0) {
-      worksheet.getCell(`K${r}`).dataValidation = {
+      worksheet.getCell(`L${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$B$2:$B$${teamLastRow}`]
       };
     }
-    // 5. Assignee dropdown (Col L)
+    // 5. Assignee dropdown (Col M)
     if (assigneeOptions.length > 0) {
-      worksheet.getCell(`L${r}`).dataValidation = {
+      worksheet.getCell(`M${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$C$2:$C$${assigneeLastRow}`]

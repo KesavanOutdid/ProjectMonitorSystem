@@ -38,6 +38,10 @@ const sprintSchema = new mongoose.Schema(
       type: Date,
       default: () => new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 2 weeks default sprint
     },
+    teams: {
+      type: [String],
+      default: [] // Empty array signifies "All Teams" (Shared Project Sprint)
+    },
     completedAt: {
       type: Date,
       default: null

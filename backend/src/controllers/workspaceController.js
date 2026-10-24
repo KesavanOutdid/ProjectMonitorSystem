@@ -261,6 +261,11 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
   let inProgressMicrotasks = 0;
   let overdueMicrotasks = 0;
 
+  let totalMinitasks = 0;
+  let completedMinitasks = 0;
+  let inProgressMinitasks = 0;
+  let overdueMinitasks = 0;
+
   const combinedStatusOverview = { ...statusOverview };
 
   allTasks.forEach(t => {
@@ -278,6 +283,40 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
         else if (isInProg) combinedStatusOverview.IN_PROGRESS = (combinedStatusOverview.IN_PROGRESS || 0) + 1;
         else combinedStatusOverview.TODO = (combinedStatusOverview.TODO || 0) + 1;
 
+        // Check minitasks (Subtask -> Minitasks -> Microtasks)
+        if (Array.isArray(st.minitasks)) {
+          totalMinitasks += st.minitasks.length;
+          st.minitasks.forEach(min => {
+            const isMinDone = min.isCompleted || min.status === 'DONE';
+            const isMinInProg = !isMinDone && (min.status === 'IN_PROGRESS' || min.status === 'IN_REVIEW');
+            if (isMinDone) completedMinitasks++;
+            else if (isMinInProg) inProgressMinitasks++;
+
+            if (min.dueDate && !isMinDone && new Date(min.dueDate) < now) overdueMinitasks++;
+
+            if (isMinDone) combinedStatusOverview.DONE = (combinedStatusOverview.DONE || 0) + 1;
+            else if (isMinInProg) combinedStatusOverview.IN_PROGRESS = (combinedStatusOverview.IN_PROGRESS || 0) + 1;
+            else combinedStatusOverview.TODO = (combinedStatusOverview.TODO || 0) + 1;
+
+            if (Array.isArray(min.microtasks)) {
+              totalMicrotasks += min.microtasks.length;
+              min.microtasks.forEach(mic => {
+                const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                const isMicInProg = !isMicDone && (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW');
+                if (isMicDone) completedMicrotasks++;
+                else if (isMicInProg) inProgressMicrotasks++;
+
+                if (mic.dueDate && !isMicDone && new Date(mic.dueDate) < now) overdueMicrotasks++;
+
+                if (isMicDone) combinedStatusOverview.DONE = (combinedStatusOverview.DONE || 0) + 1;
+                else if (isMicInProg) combinedStatusOverview.IN_PROGRESS = (combinedStatusOverview.IN_PROGRESS || 0) + 1;
+                else combinedStatusOverview.TODO = (combinedStatusOverview.TODO || 0) + 1;
+              });
+            }
+          });
+        }
+
+        // Also check if subtask has legacy direct microtasks
         if (Array.isArray(st.microtasks)) {
           totalMicrotasks += st.microtasks.length;
           st.microtasks.forEach(mic => {
@@ -297,10 +336,10 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
     }
   });
 
-  const totalAllItems = totalTasks + totalSubtasks + totalMicrotasks;
-  const totalCompletedAll = completedTasks + completedSubtasks + completedMicrotasks;
-  const totalInProgressAll = inProgressTasks + inProgressSubtasks + inProgressMicrotasks;
-  const totalOverdueAll = overdueTasks + overdueSubtasks + overdueMicrotasks;
+  const totalAllItems = totalTasks + totalSubtasks + totalMicrotasks + totalMinitasks;
+  const totalCompletedAll = completedTasks + completedSubtasks + completedMicrotasks + completedMinitasks;
+  const totalInProgressAll = inProgressTasks + inProgressSubtasks + inProgressMicrotasks + inProgressMinitasks;
+  const totalOverdueAll = overdueTasks + overdueSubtasks + overdueMicrotasks + overdueMinitasks;
 
   // 11. All sprints across projects
   const allSprints = await Sprint.find({
@@ -320,20 +359,84 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
     const tmKeyLower = (tm.key || '').toLowerCase();
     const memberIds = (tm.members || []).map((m) => (m._id || m).toString());
 
-    const tmTasks = allTasks.filter((t) => {
-      const tTeam = (t.team || '').trim().toLowerCase();
-      if (tTeam) {
-        return tTeam === tmNameLower || (tmKeyLower && tTeam === tmKeyLower);
+    // Helper to test if an item belongs to this team
+    const itemMatchesTeam = (item, parentTeam) => {
+      const itemTeam = (item.team || parentTeam || '').trim().toLowerCase();
+      if (itemTeam) {
+        return itemTeam === tmNameLower || (tmKeyLower && itemTeam === tmKeyLower);
       }
-      return t.assigneeId && memberIds.includes((t.assigneeId._id || t.assigneeId).toString());
-    });
+      if (tmKeyLower && item.key) {
+        const parts = item.key.toLowerCase().split('-');
+        if (parts.includes(tmKeyLower)) return true;
+      }
+      if (item.assigneeId) {
+        const aId = (item.assigneeId._id || item.assigneeId).toString();
+        if (memberIds.includes(aId)) return true;
+      }
+      return false;
+    };
 
-    const total = tmTasks.length;
-    const done = tmTasks.filter((t) => t.status === 'DONE').length;
-    const inProgress = tmTasks.filter((t) => t.status === 'IN_PROGRESS').length;
-    const overdue = tmTasks.filter(
-      (t) => t.dueDate && t.status !== 'DONE' && new Date(t.dueDate) < now
-    ).length;
+    let total = 0;
+    let done = 0;
+    let inProgress = 0;
+    let overdue = 0;
+
+    allTasks.forEach(t => {
+      if (itemMatchesTeam(t, '')) {
+        total++;
+        if (t.status === 'DONE') done++;
+        else if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') inProgress++;
+        if (t.dueDate && t.status !== 'DONE' && new Date(t.dueDate) < now) overdue++;
+      }
+
+      if (Array.isArray(t.subtasks)) {
+        t.subtasks.forEach(st => {
+          if (itemMatchesTeam(st, t.team)) {
+            total++;
+            const isStDone = st.isCompleted || st.status === 'DONE';
+            if (isStDone) done++;
+            else if (st.status === 'IN_PROGRESS' || st.status === 'IN_REVIEW') inProgress++;
+            if (st.dueDate && !isStDone && new Date(st.dueDate) < now) overdue++;
+          }
+
+          if (Array.isArray(st.minitasks)) {
+            st.minitasks.forEach(min => {
+              if (itemMatchesTeam(min, st.team || t.team)) {
+                total++;
+                const isMinDone = min.isCompleted || min.status === 'DONE';
+                if (isMinDone) done++;
+                else if (min.status === 'IN_PROGRESS' || min.status === 'IN_REVIEW') inProgress++;
+                if (min.dueDate && !isMinDone && new Date(min.dueDate) < now) overdue++;
+              }
+
+              if (Array.isArray(min.microtasks)) {
+                min.microtasks.forEach(mic => {
+                  if (itemMatchesTeam(mic, min.team || st.team || t.team)) {
+                    total++;
+                    const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                    if (isMicDone) done++;
+                    else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') inProgress++;
+                    if (mic.dueDate && !isMicDone && new Date(mic.dueDate) < now) overdue++;
+                  }
+                });
+              }
+            });
+          }
+
+          if (Array.isArray(st.microtasks)) {
+            st.microtasks.forEach(mic => {
+              if (itemMatchesTeam(mic, st.team || t.team)) {
+                total++;
+                const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                if (isMicDone) done++;
+                else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') inProgress++;
+                if (mic.dueDate && !isMicDone && new Date(mic.dueDate) < now) overdue++;
+              }
+            });
+          }
+        });
+      }
+    });
 
     return {
       _id: tm._id,
@@ -372,16 +475,96 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
     };
     const isWIP = (status) => !isDone(status) && !isTodo(status);
 
-    const projTotal = projTasks.length;
-    const projDone = projTasks.filter(t => isDone(t.status)).length;
-    const projInProgress = projTasks.filter(t => isWIP(t.status)).length;
-    const projReview = projTasks.filter(t => t.status === 'IN_REVIEW').length;
-    const projTodo = projTasks.filter(t => isTodo(t.status)).length;
-    const projBacklog = projTasks.filter(t => t.status === 'BACKLOG').length;
-    const projOverdue = projTasks.filter(t =>
-      t.dueDate && !isDone(t.status) && new Date(t.dueDate) < now
-    ).length;
-    const completionPercent = projTotal > 0 ? Math.round((projDone / projTotal) * 100) : 0;
+    let mainTasksCount = projTasks.length;
+    let completedMainTasks = 0;
+    let inProgressMainTasks = 0;
+    let todoMainTasks = 0;
+    let overdueMainTasks = 0;
+
+    let subtasksCount = 0;
+    let completedSubtasks = 0;
+    let inProgressSubtasks = 0;
+    let todoSubtasks = 0;
+    let overdueSubtasks = 0;
+
+    let minitasksCount = 0;
+    let completedMinitasks = 0;
+    let inProgressMinitasks = 0;
+    let todoMinitasks = 0;
+    let overdueMinitasks = 0;
+
+    let microtasksCount = 0;
+    let completedMicrotasks = 0;
+    let inProgressMicrotasks = 0;
+    let todoMicrotasks = 0;
+    let overdueMicrotasks = 0;
+
+    const evalStatus = (status, isCompleted, dueDate) => {
+      const done = isCompleted || isDone(status);
+      const inProg = !done && (isWIP(status) || status === 'IN_PROGRESS' || status === 'IN_REVIEW');
+      const todo = !done && !inProg;
+      const overdue = dueDate && !done && new Date(dueDate) < now;
+      return { done, inProg, todo, overdue };
+    };
+
+    projTasks.forEach(t => {
+      const s = evalStatus(t.status, t.status === 'DONE', t.dueDate);
+      if (s.done) completedMainTasks++;
+      else if (s.inProg) inProgressMainTasks++;
+      else todoMainTasks++;
+      if (s.overdue) overdueMainTasks++;
+
+      if (Array.isArray(t.subtasks)) {
+        subtasksCount += t.subtasks.length;
+        t.subtasks.forEach(st => {
+          const ss = evalStatus(st.status, st.isCompleted, st.dueDate);
+          if (ss.done) completedSubtasks++;
+          else if (ss.inProg) inProgressSubtasks++;
+          else todoSubtasks++;
+          if (ss.overdue) overdueSubtasks++;
+
+          if (Array.isArray(st.minitasks)) {
+            minitasksCount += st.minitasks.length;
+            st.minitasks.forEach(min => {
+              const sm = evalStatus(min.status, min.isCompleted, min.dueDate);
+              if (sm.done) completedMinitasks++;
+              else if (sm.inProg) inProgressMinitasks++;
+              else todoMinitasks++;
+              if (sm.overdue) overdueMinitasks++;
+
+              if (Array.isArray(min.microtasks)) {
+                microtasksCount += min.microtasks.length;
+                min.microtasks.forEach(mic => {
+                  const sc = evalStatus(mic.status, mic.isCompleted, mic.dueDate);
+                  if (sc.done) completedMicrotasks++;
+                  else if (sc.inProg) inProgressMicrotasks++;
+                  else todoMicrotasks++;
+                  if (sc.overdue) overdueMicrotasks++;
+                });
+              }
+            });
+          }
+
+          if (Array.isArray(st.microtasks)) {
+            microtasksCount += st.microtasks.length;
+            st.microtasks.forEach(mic => {
+              const sc = evalStatus(mic.status, mic.isCompleted, mic.dueDate);
+              if (sc.done) completedMicrotasks++;
+              else if (sc.inProg) inProgressMicrotasks++;
+              else todoMicrotasks++;
+              if (sc.overdue) overdueMicrotasks++;
+            });
+          }
+        });
+      }
+    });
+
+    const totalDeliverables = mainTasksCount + subtasksCount + minitasksCount + microtasksCount;
+    const completedDeliverables = completedMainTasks + completedSubtasks + completedMinitasks + completedMicrotasks;
+    const inProgressDeliverables = inProgressMainTasks + inProgressSubtasks + inProgressMinitasks + inProgressMicrotasks;
+    const todoDeliverables = todoMainTasks + todoSubtasks + todoMinitasks + todoMicrotasks;
+    const overdueDeliverables = overdueMainTasks + overdueSubtasks + overdueMinitasks + overdueMicrotasks;
+    const completionPercent = totalDeliverables > 0 ? Math.round((completedDeliverables / totalDeliverables) * 100) : 0;
 
     // Sprints for this project
     const projSprints = allSprints.filter(s => s.projectId?._id?.toString() === proj._id.toString() || s.projectId?.toString() === proj._id.toString());
@@ -394,9 +577,53 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
         (t.sprintId && t.sprintId.toString() === activeSprintDoc._id.toString()) ||
         t.sprint === activeSprintDoc.name
       );
-      const spTotal = sprintTasks.length;
-      const spDone = sprintTasks.filter(t => t.status === 'DONE').length;
-      const spInProgress = sprintTasks.filter(t => t.status === 'IN_PROGRESS').length;
+
+      let spTotal = 0;
+      let spDone = 0;
+      let spInProgress = 0;
+
+      sprintTasks.forEach(t => {
+        spTotal++;
+        if (t.status === 'DONE') spDone++;
+        else if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') spInProgress++;
+
+        if (Array.isArray(t.subtasks)) {
+          t.subtasks.forEach(st => {
+            spTotal++;
+            const isStDone = st.isCompleted || st.status === 'DONE';
+            if (isStDone) spDone++;
+            else if (st.status === 'IN_PROGRESS' || st.status === 'IN_REVIEW') spInProgress++;
+
+            if (Array.isArray(st.minitasks)) {
+              st.minitasks.forEach(min => {
+                spTotal++;
+                const isMinDone = min.isCompleted || min.status === 'DONE';
+                if (isMinDone) spDone++;
+                else if (min.status === 'IN_PROGRESS' || min.status === 'IN_REVIEW') spInProgress++;
+
+                if (Array.isArray(min.microtasks)) {
+                  min.microtasks.forEach(mic => {
+                    spTotal++;
+                    const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                    if (isMicDone) spDone++;
+                    else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') spInProgress++;
+                  });
+                }
+              });
+            }
+
+            if (Array.isArray(st.microtasks)) {
+              st.microtasks.forEach(mic => {
+                spTotal++;
+                const isMicDone = mic.isCompleted || mic.status === 'DONE';
+                if (isMicDone) spDone++;
+                else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') spInProgress++;
+              });
+            }
+          });
+        }
+      });
+
       const daysRemaining = activeSprintDoc.endDate
         ? Math.max(0, Math.ceil((new Date(activeSprintDoc.endDate) - now) / (1000 * 60 * 60 * 24)))
         : 0;
@@ -408,6 +635,8 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
         startDate: activeSprintDoc.startDate,
         endDate: activeSprintDoc.endDate,
         daysRemaining,
+        mainTasksCount: sprintTasks.length,
+        completedMainTasks: sprintTasks.filter(t => t.status === 'DONE').length,
         totalTasks: spTotal,
         completedTasks: spDone,
         inProgressTasks: spInProgress,
@@ -415,7 +644,7 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
       };
     }
 
-    // Workflow stages breakdown
+    // Workflow stages breakdown across all project deliverables
     const defaultStages = [
       { id: 'BACKLOG', label: 'Idea', color: 'bg-slate-500' },
       { id: 'TODO', label: 'To Do', color: 'bg-blue-500' },
@@ -428,9 +657,35 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
       : defaultStages;
 
     const stagesBreakdown = projectStages.map(stg => {
-      const stageTasks = projTasks.filter(t => t.status === stg.id);
-      const count = stageTasks.length;
-      const percent = projTotal > 0 ? Math.round((count / projTotal) * 100) : 0;
+      let count = 0;
+      projTasks.forEach(t => {
+        if (t.status === stg.id) count++;
+        if (Array.isArray(t.subtasks)) {
+          t.subtasks.forEach(st => {
+            const stStatus = st.isCompleted ? 'DONE' : (st.status || 'TODO');
+            if (stStatus === stg.id) count++;
+            if (Array.isArray(st.minitasks)) {
+              st.minitasks.forEach(min => {
+                const minStatus = min.isCompleted ? 'DONE' : (min.status || 'TODO');
+                if (minStatus === stg.id) count++;
+                if (Array.isArray(min.microtasks)) {
+                  min.microtasks.forEach(mic => {
+                    const micStatus = mic.isCompleted ? 'DONE' : (mic.status || 'TODO');
+                    if (micStatus === stg.id) count++;
+                  });
+                }
+              });
+            }
+            if (Array.isArray(st.microtasks)) {
+              st.microtasks.forEach(mic => {
+                const micStatus = mic.isCompleted ? 'DONE' : (mic.status || 'TODO');
+                if (micStatus === stg.id) count++;
+              });
+            }
+          });
+        }
+      });
+      const percent = totalDeliverables > 0 ? Math.round((count / totalDeliverables) * 100) : 0;
       return {
         id: stg.id,
         label: stg.label,
@@ -471,23 +726,87 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
     ];
 
     const teamsProgress = combinedTeams.map(tm => {
-      const tmNameLower = (tm.name || '').toLowerCase();
-      const tmKeyLower = (tm.key || '').toLowerCase();
+      const tmNameLower = (tm.name || '').toLowerCase().trim();
+      const tmKeyLower = (tm.key || '').toLowerCase().trim();
       const memberIds = (tm.members || []).map((m) => (m._id || m).toString());
-      const tmTasks = projTasks.filter(t => {
-        const taskTeam = (t.team || '').trim().toLowerCase();
-        if (taskTeam) {
-          return taskTeam === tmNameLower || (tmKeyLower && taskTeam === tmKeyLower);
-        }
-        return t.assigneeId && memberIds.includes((t.assigneeId._id || t.assigneeId).toString());
-      });
 
-      const tmTotal = tmTasks.length;
-      const tmDone = tmTasks.filter(t => t.status === 'DONE').length;
-      const tmInProgress = tmTasks.filter(t => t.status === 'IN_PROGRESS').length;
-      const tmOverdue = tmTasks.filter(t =>
-        t.dueDate && t.status !== 'DONE' && new Date(t.dueDate) < now
-      ).length;
+      const itemMatchesThisTeam = (item, parentTeam) => {
+        const itemTeam = (item.team || parentTeam || '').trim().toLowerCase();
+        if (itemTeam) {
+          return itemTeam === tmNameLower || (tmKeyLower && itemTeam === tmKeyLower);
+        }
+        if (tmKeyLower && item.key) {
+          const parts = item.key.toLowerCase().split('-');
+          if (parts.includes(tmKeyLower)) return true;
+        }
+        if (item.assigneeId) {
+          const aId = (item.assigneeId._id || item.assigneeId).toString();
+          if (memberIds.includes(aId)) return true;
+        }
+        return false;
+      };
+
+      let tmTotal = 0;
+      let tmDone = 0;
+      let tmInProgress = 0;
+      let tmOverdue = 0;
+
+      projTasks.forEach(t => {
+        if (itemMatchesThisTeam(t, '')) {
+          tmTotal++;
+          if (t.status === 'DONE') tmDone++;
+          else if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') tmInProgress++;
+          if (t.dueDate && t.status !== 'DONE' && new Date(t.dueDate) < now) tmOverdue++;
+        }
+
+        if (Array.isArray(t.subtasks)) {
+          t.subtasks.forEach(st => {
+            if (itemMatchesThisTeam(st, t.team)) {
+              tmTotal++;
+              const isDone = st.isCompleted || st.status === 'DONE';
+              if (isDone) tmDone++;
+              else if (st.status === 'IN_PROGRESS' || st.status === 'IN_REVIEW') tmInProgress++;
+              if (st.dueDate && !isDone && new Date(st.dueDate) < now) tmOverdue++;
+            }
+
+            if (Array.isArray(st.minitasks)) {
+              st.minitasks.forEach(min => {
+                if (itemMatchesThisTeam(min, st.team || t.team)) {
+                  tmTotal++;
+                  const isDone = min.isCompleted || min.status === 'DONE';
+                  if (isDone) tmDone++;
+                  else if (min.status === 'IN_PROGRESS' || min.status === 'IN_REVIEW') tmInProgress++;
+                  if (min.dueDate && !isDone && new Date(min.dueDate) < now) tmOverdue++;
+                }
+
+                if (Array.isArray(min.microtasks)) {
+                  min.microtasks.forEach(mic => {
+                    if (itemMatchesThisTeam(mic, min.team || st.team || t.team)) {
+                      tmTotal++;
+                      const isDone = mic.isCompleted || mic.status === 'DONE';
+                      if (isDone) tmDone++;
+                      else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') tmInProgress++;
+                      if (mic.dueDate && !isDone && new Date(mic.dueDate) < now) tmOverdue++;
+                    }
+                  });
+                }
+              });
+            }
+
+            if (Array.isArray(st.microtasks)) {
+              st.microtasks.forEach(mic => {
+                if (itemMatchesThisTeam(mic, st.team || t.team)) {
+                  tmTotal++;
+                  const isDone = mic.isCompleted || mic.status === 'DONE';
+                  if (isDone) tmDone++;
+                  else if (mic.status === 'IN_PROGRESS' || mic.status === 'IN_REVIEW') tmInProgress++;
+                  if (mic.dueDate && !isDone && new Date(mic.dueDate) < now) tmOverdue++;
+                }
+              });
+            }
+          });
+        }
+      });
 
       return {
         _id: tm._id,
@@ -505,7 +824,7 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
     });
 
     // Health calculation
-    const healthStatus = projOverdue > 1 ? 'BEHIND' : projOverdue > 0 ? 'AT_RISK' : 'ON_TRACK';
+    const healthStatus = overdueDeliverables > 1 ? 'BEHIND' : overdueDeliverables > 0 ? 'AT_RISK' : 'ON_TRACK';
 
     return {
       _id: proj._id,
@@ -515,13 +834,46 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
       category: proj.category || 'Engineering',
       description: proj.description || '',
       lead: proj.leadId,
-      totalTasks: projTotal,
-      completedTasks: projDone,
-      inProgressTasks: projInProgress,
-      inReviewTasks: projReview,
-      todoTasks: projTodo,
-      backlogTasks: projBacklog,
-      overdueTasks: projOverdue,
+
+      // Multi-tier hierarchy breakdown
+      mainTasksCount,
+      completedMainTasks,
+      inProgressMainTasks,
+      todoMainTasks,
+      overdueMainTasks,
+
+      subtasksCount,
+      completedSubtasks,
+      inProgressSubtasks,
+      todoSubtasks,
+      overdueSubtasks,
+
+      minitasksCount,
+      completedMinitasks,
+      inProgressMinitasks,
+      todoMinitasks,
+      overdueMinitasks,
+
+      microtasksCount,
+      completedMicrotasks,
+      inProgressMicrotasks,
+      todoMicrotasks,
+      overdueMicrotasks,
+
+      totalDeliverables,
+      completedDeliverables,
+      inProgressDeliverables,
+      todoDeliverables,
+      overdueDeliverables,
+
+      // Seamless backward-compatible aliases
+      totalTasks: totalDeliverables,
+      completedTasks: completedDeliverables,
+      inProgressTasks: inProgressDeliverables,
+      inReviewTasks: 0,
+      todoTasks: todoDeliverables,
+      backlogTasks: 0,
+      overdueTasks: overdueDeliverables,
       completionPercent,
       health: healthStatus,
       totalSprints: projSprints.length,
@@ -756,6 +1108,13 @@ const getWorkspaceDashboard = asyncHandler(async (req, res) => {
           inProgress: inProgressMicrotasks,
           overdue: overdueMicrotasks,
           completionRate: totalMicrotasks > 0 ? Math.round((completedMicrotasks / totalMicrotasks) * 100) : 0
+        },
+        minitasks: {
+          total: totalMinitasks,
+          completed: completedMinitasks,
+          inProgress: inProgressMinitasks,
+          overdue: overdueMinitasks,
+          completionRate: totalMinitasks > 0 ? Math.round((completedMinitasks / totalMinitasks) * 100) : 0
         }
       },
       combinedStatusOverview,

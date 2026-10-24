@@ -92,7 +92,7 @@ const getSprints = asyncHandler(async (req, res) => {
 // @access  Private
 const createSprint = asyncHandler(async (req, res) => {
   const { projectId } = req.params;
-  const { name, goal, startDate, endDate, status } = req.body;
+  const { name, goal, startDate, endDate, status, teams } = req.body;
 
   const project = await Project.findById(projectId);
   if (!project) {
@@ -110,6 +110,7 @@ const createSprint = asyncHandler(async (req, res) => {
     name: sprintName,
     goal: goal || '',
     status: status || 'PLANNED',
+    teams: Array.isArray(teams) ? teams.filter(Boolean) : [],
     projectId,
     workspaceId: project.workspaceId,
     startDate: start,
@@ -250,7 +251,7 @@ const completeSprint = asyncHandler(async (req, res) => {
 // @access  Private
 const updateSprint = asyncHandler(async (req, res) => {
   const { projectId, sprintId } = req.params;
-  const { name, goal, startDate, endDate, status, reason } = req.body;
+  const { name, goal, startDate, endDate, status, reason, teams } = req.body;
 
   const sprint = await Sprint.findOne({ _id: sprintId, projectId });
   if (!sprint) {
@@ -270,6 +271,9 @@ const updateSprint = asyncHandler(async (req, res) => {
   }
   if (goal !== undefined) sprint.goal = goal;
   if (status) sprint.status = status;
+  if (teams !== undefined) {
+    sprint.teams = Array.isArray(teams) ? teams.filter(Boolean) : [];
+  }
   sprint.updatedBy = req.user._id;
 
   if (startDate && new Date(startDate).getTime() !== new Date(prevStart).getTime()) {

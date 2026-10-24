@@ -14,9 +14,13 @@ const {
   addMicrotask,
   updateMicrotask,
   deleteMicrotask,
+  addMinitask,
+  updateMinitask,
+  deleteMinitask,
   logWork,
   toggleWatchTask,
   toggleRestrictTask,
+  toggleLockTask,
   uploadAttachment,
   deleteAttachment,
   linkTask,
@@ -43,6 +47,7 @@ router.route('/:taskId')
 router.get('/:taskId/activities', getTaskActivities);
 router.post('/:taskId/watch', toggleWatchTask);
 router.post('/:taskId/restrict', toggleRestrictTask);
+router.post('/:taskId/lock', toggleLockTask);
 
 // Task Links
 router.post('/:taskId/links', linkTask);
@@ -54,15 +59,27 @@ router.route('/:taskId/subtasks')
 router.route('/:taskId/subtasks/:subtaskId')
   .patch(toggleSubtask)
   .delete(deleteSubtask);
+router.post('/:taskId/subtasks/:subtaskId/lock', toggleLockTask);
 
-// Microtasks
-router.route('/:taskId/subtasks/:subtaskId/microtasks')
+// Mini-tasks (Level 3 - under Subtask)
+router.route('/:taskId/subtasks/:subtaskId/minitasks')
+  .post(addMinitask);
+
+router.route('/:taskId/subtasks/:subtaskId/minitasks/:minitaskId')
+  .patch(updateMinitask)
+  .put(updateMinitask)
+  .delete(deleteMinitask);
+router.post('/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/lock', toggleLockTask);
+
+// Microtasks (Level 4 - under Mini-task)
+router.route('/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks')
   .post(addMicrotask);
 
-router.route('/:taskId/subtasks/:subtaskId/microtasks/:microtaskId')
+router.route('/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks/:microtaskId')
   .patch(updateMicrotask)
   .put(updateMicrotask)
   .delete(deleteMicrotask);
+router.post('/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks/:microtaskId/lock', toggleLockTask);
 
 router.route('/:taskId/worklogs')
   .post(logWork);

@@ -117,6 +117,7 @@ export default function DashboardPage() {
   const [selectedTask, setSelectedTask] = useState<any | null>(null);
   const [targetSubtaskId, setTargetSubtaskId] = useState<string | null>(null);
   const [targetMicrotaskId, setTargetMicrotaskId] = useState<string | null>(null);
+  const [targetMinitaskId, setTargetMinitaskId] = useState<string | null>(null);
   const [initialTaskStatus, setInitialTaskStatus] = useState<string>('TODO');
   const [initialTaskTeam, setInitialTaskTeam] = useState<string>('');
   const [initialTaskSprintId, setInitialTaskSprintId] = useState<string>('');
@@ -403,11 +404,12 @@ export default function DashboardPage() {
 
   const handleSelectTask = (
     task: any,
-    context?: { targetSubtaskId?: string; targetMicrotaskId?: string }
+    context?: { targetSubtaskId?: string; targetMicrotaskId?: string; targetMinitaskId?: string }
   ) => {
     setSelectedTask(task);
     setTargetSubtaskId(context?.targetSubtaskId || null);
     setTargetMicrotaskId(context?.targetMicrotaskId || null);
+    setTargetMinitaskId(context?.targetMinitaskId || null);
     setIsTaskModalOpen(true);
   };
 
@@ -662,6 +664,7 @@ export default function DashboardPage() {
             setIsTaskModalOpen(false);
             setTargetSubtaskId(null);
             setTargetMicrotaskId(null);
+            setTargetMinitaskId(null);
           }}
           task={selectedTask}
           initialStatus={initialTaskStatus}
@@ -669,6 +672,7 @@ export default function DashboardPage() {
           initialSprintId={initialTaskSprintId}
           initialTargetSubtaskId={targetSubtaskId || undefined}
           initialTargetMicrotaskId={targetMicrotaskId || undefined}
+          initialTargetMinitaskId={targetMinitaskId || undefined}
           projectId={currentProject?._id || (projects && projects[0]?._id) || ''}
         />
       )}

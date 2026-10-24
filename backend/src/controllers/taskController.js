@@ -280,6 +280,13 @@ const getTasks = asyncHandler(async (req, res) => {
       .limit(parsedLimit + 1)
       .populate('assigneeId', 'name email avatar jobTitle')
       .populate('reporterId', 'name email avatar')
+      .populate('lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.microtasks.lockedBy', 'name email avatar jobTitle')
       .lean();
   });
 
@@ -332,9 +339,14 @@ const getKanbanTasks = asyncHandler(async (req, res) => {
       .sort({ order: 1, updatedAt: -1 })
       .populate('assigneeId', 'name email avatar jobTitle')
       .populate('reporterId', 'name email avatar')
+      .populate('lockedBy', 'name email avatar jobTitle')
       .populate('sprintId', 'name status')
       .populate('subtasks.assigneeId', 'name email avatar')
-      .populate('subtasks.microtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.microtasks.lockedBy', 'name email avatar jobTitle')
       .lean();
   });
 
@@ -543,22 +555,51 @@ const createTask = asyncHandler(async (req, res) => {
         const safeSubAssignee = st.assigneeId && mongoose.Types.ObjectId.isValid(st.assigneeId) ? st.assigneeId : null;
         const subStatus = st.status || status || firstStageId;
 
-        const formattedMicrotasks = [];
-        if (Array.isArray(st.microtasks) && st.microtasks.length > 0) {
-          st.microtasks.forEach((mic, mIdx) => {
-            if (mic && mic.title && mic.title.trim()) {
-              const micIndex = mIdx + 1;
-              const micKey = `${projKey}-MIC-${teamCode}-${taskNumber}-${subtaskIndex}-${micIndex}`;
-              const safeMicAssignee = mic.assigneeId && mongoose.Types.ObjectId.isValid(mic.assigneeId) ? mic.assigneeId : null;
-              formattedMicrotasks.push({
-                key: micKey,
-                title: mic.title.trim(),
-                description: mic.description ? mic.description.trim() : '',
-                status: mic.status || 'TODO',
-                isCompleted: mic.isCompleted || mic.status === 'DONE' || false,
-                assigneeId: safeMicAssignee,
-                startDate: mic.startDate ? new Date(mic.startDate) : null,
-                dueDate: mic.dueDate ? new Date(mic.dueDate) : null,
+        const formattedMinitasks = [];
+        const rawMinitasks = Array.isArray(st.minitasks) && st.minitasks.length > 0
+          ? st.minitasks
+          : (Array.isArray(st.microtasks) && st.microtasks.length > 0 ? st.microtasks : []);
+
+        if (rawMinitasks.length > 0) {
+          rawMinitasks.forEach((min, mIdx) => {
+            if (min && min.title && min.title.trim()) {
+              const minIndex = mIdx + 1;
+              const minKey = `${projKey}-MIN-${teamCode}-${taskNumber}-${subtaskIndex}-${minIndex}`;
+              const safeMinAssignee = min.assigneeId && mongoose.Types.ObjectId.isValid(min.assigneeId) ? min.assigneeId : null;
+              const formattedMicrotasks = [];
+              if (Array.isArray(min.microtasks) && min.microtasks.length > 0) {
+                min.microtasks.forEach((mic, micIdx) => {
+                  if (mic && mic.title && mic.title.trim()) {
+                    const micIndex = micIdx + 1;
+                    const micKey = `${projKey}-MIC-${teamCode}-${taskNumber}-${subtaskIndex}-${minIndex}-${micIndex}`;
+                    const safeMicAssignee = mic.assigneeId && mongoose.Types.ObjectId.isValid(mic.assigneeId) ? mic.assigneeId : null;
+                    formattedMicrotasks.push({
+                      key: micKey,
+                      title: mic.title.trim(),
+                      description: mic.description ? mic.description.trim() : '',
+                      status: mic.status || 'TODO',
+                      isCompleted: mic.isCompleted || mic.status === 'DONE' || false,
+                      assigneeId: safeMicAssignee,
+                      startDate: mic.startDate ? new Date(mic.startDate) : null,
+                      dueDate: mic.dueDate ? new Date(mic.dueDate) : null,
+                      createdBy: req.user._id,
+                      createdAt: new Date()
+                    });
+                  }
+                });
+              }
+
+              const finalMinAssignee = formattedMicrotasks.length > 0 ? null : safeMinAssignee;
+              formattedMinitasks.push({
+                key: minKey,
+                title: min.title.trim(),
+                description: min.description ? min.description.trim() : '',
+                status: min.status || 'TODO',
+                isCompleted: min.isCompleted || min.status === 'DONE' || false,
+                assigneeId: finalMinAssignee,
+                startDate: min.startDate ? new Date(min.startDate) : null,
+                dueDate: min.dueDate ? new Date(min.dueDate) : null,
+                microtasks: formattedMicrotasks,
                 createdBy: req.user._id,
                 createdAt: new Date()
               });
@@ -566,8 +607,8 @@ const createTask = asyncHandler(async (req, res) => {
           });
         }
 
-        // If subtask has microtasks, subtask assignee is blank/unassigned (managed via microtasks)
-        const finalSubAssignee = formattedMicrotasks.length > 0 ? null : safeSubAssignee;
+        // If subtask has minitasks, subtask assignee is blank/unassigned (managed via minitasks)
+        const finalSubAssignee = formattedMinitasks.length > 0 ? null : safeSubAssignee;
 
         formattedSubtasks.push({
           key: subtaskKey,
@@ -578,7 +619,7 @@ const createTask = asyncHandler(async (req, res) => {
           startDate: st.startDate ? new Date(st.startDate) : null,
           dueDate: st.dueDate ? new Date(st.dueDate) : null,
           assigneeId: finalSubAssignee,
-          microtasks: formattedMicrotasks,
+          minitasks: formattedMinitasks,
           createdBy: req.user._id,
           createdAt: new Date()
         });
@@ -834,6 +875,7 @@ const getTaskById = asyncHandler(async (req, res) => {
   const task = await Task.findById(taskId)
     .populate('assigneeId', 'name email avatar jobTitle')
     .populate('reporterId', 'name email avatar jobTitle')
+    .populate('lockedBy', 'name email avatar jobTitle')
     .populate('createdBy', 'name email avatar jobTitle')
     .populate('updatedBy', 'name email avatar jobTitle')
     .populate('sprintId', 'name status')
@@ -842,7 +884,11 @@ const getTaskById = asyncHandler(async (req, res) => {
     .populate('workLogs.userId', 'name email avatar')
     .populate('subtasks.createdBy', 'name email')
     .populate('subtasks.assigneeId', 'name email avatar')
-    .populate('subtasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.lockedBy', 'name email avatar jobTitle')
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.lockedBy', 'name email avatar jobTitle')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.lockedBy', 'name email avatar jobTitle')
     .populate('watchers', 'name email avatar')
     .populate('originRequestId', 'key title requestStatus requestType')
     .lean();
@@ -1241,7 +1287,7 @@ const toggleSubtask = asyncHandler(async (req, res) => {
   if (dueDate !== undefined) {
     subtask.dueDate = dueDate ? new Date(dueDate) : null;
   }
-  if (assigneeId !== undefined) {
+  if (assigneeId !== undefined && perm.allowed) {
     if (subtask.microtasks && subtask.microtasks.length > 0) {
       subtask.assigneeId = null;
     } else {
@@ -1407,8 +1453,40 @@ const deleteSubtask = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, error: 'Task not found' });
   }
 
-  const project = await Project.findById(task.projectId);
+  if (task.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (task.lockedBy) {
+      try {
+        const locker = await User.findById(task.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `This parent task is locked by ${lockerName} and cannot be deleted. Child subtasks cannot be deleted while locked.`
+    });
+  }
+
   const subtask = task.subtasks.id(subtaskId);
+  if (!subtask) {
+    return res.status(404).json({ success: false, error: 'Subtask not found' });
+  }
+
+  if (subtask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (subtask.lockedBy) {
+      try {
+        const locker = await User.findById(subtask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `This subtask is locked by ${lockerName} and cannot be deleted. Only ${lockerName} can unlock it.`
+    });
+  }
+
+  const project = await Project.findById(task.projectId);
   const isTaskAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
   const isSubtaskAssignee = subtask?.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
   const perm = await checkTaskPermission(req.user, project, task, 'DELETE_SUBTASK', req);
@@ -1459,15 +1537,15 @@ const deleteSubtask = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Add Microtask to Subtask
-// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/microtasks
+// @desc    Add Minitask to Subtask (Level 3)
+// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks
 // @access  Private
-const addMicrotask = asyncHandler(async (req, res) => {
+const addMinitask = asyncHandler(async (req, res) => {
   const { taskId, subtaskId } = req.params;
   const { title, description, startDate, dueDate, assigneeId, status } = req.body;
 
   if (!title || !title.trim()) {
-    return res.status(400).json({ success: false, error: 'Microtask title is required' });
+    return res.status(400).json({ success: false, error: 'Mini-task title is required' });
   }
 
   const task = await Task.findById(taskId);
@@ -1486,22 +1564,361 @@ const addMicrotask = asyncHandler(async (req, res) => {
   const perm = await checkTaskPermission(req.user, project, task, 'CREATE_SUBTASK', req);
 
   if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee) {
-    return res.status(403).json({ success: false, error: 'Permission denied to add microtask' });
+    return res.status(403).json({ success: false, error: 'Permission denied to add mini-task' });
   }
 
-  if (!subtask.microtasks) {
-    subtask.microtasks = [];
+  if (!subtask.minitasks) {
+    subtask.minitasks = [];
   }
 
-  const microIndex = subtask.microtasks.length + 1;
-  let microKey = '';
+  const miniIndex = subtask.minitasks.length + 1;
+  let miniKey = '';
   if (subtask.key) {
-    microKey = subtask.key.replace('-ST-', '-MIC-') + `-${microIndex}`;
+    miniKey = subtask.key.replace('-ST-', '-MIN-') + `-${miniIndex}`;
   } else {
-    microKey = `${task.key || 'TASK'}-MIC-${microIndex}`;
+    miniKey = `${task.key || 'TASK'}-MIN-${miniIndex}`;
   }
 
-  const safeAssigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
+  let safeAssigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
+  if (!perm.allowed) {
+    safeAssigneeId = req.user._id;
+  }
+
+  const newMinitask = {
+    key: miniKey,
+    title: title.trim(),
+    description: description ? description.trim() : '',
+    startDate: startDate ? new Date(startDate) : null,
+    dueDate: dueDate ? new Date(dueDate) : null,
+    status: status || 'TODO',
+    isCompleted: status === 'DONE',
+    assigneeId: safeAssigneeId,
+    createdBy: req.user._id,
+    createdAt: new Date(),
+    microtasks: []
+  };
+
+  subtask.minitasks.push(newMinitask);
+
+  // Automatically sync / expand subtask and main task dates
+  if (newMinitask.startDate) {
+    if (!subtask.startDate || newMinitask.startDate < new Date(subtask.startDate)) {
+      subtask.startDate = newMinitask.startDate;
+    }
+    if (!task.startDate || newMinitask.startDate < new Date(task.startDate)) {
+      task.startDate = newMinitask.startDate;
+    }
+  }
+  if (newMinitask.dueDate) {
+    if (!subtask.dueDate || newMinitask.dueDate > new Date(subtask.dueDate)) {
+      subtask.dueDate = newMinitask.dueDate;
+    }
+    if (!task.dueDate || newMinitask.dueDate > new Date(task.dueDate)) {
+      task.dueDate = newMinitask.dueDate;
+    }
+  }
+
+  task.updatedBy = req.user._id;
+  await task.save();
+
+  await Activity.create({
+    taskId: task._id,
+    projectId: task.projectId,
+    userId: req.user._id,
+    action: 'MINITASK_ADDED',
+    field: 'minitasks',
+    newValue: title.trim(),
+    metadata: {
+      subtaskId,
+      minitaskId: newMinitask._id,
+      minitaskKey: miniKey,
+      title: title.trim()
+    }
+  });
+
+  await CacheService.invalidateProject(task.projectId);
+  await CacheService.invalidatePattern(`kanban:${task.projectId}*`);
+
+  const populatedTask = await Task.findById(taskId)
+    .populate('subtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
+
+  emitToProject(task.projectId, 'task:updated', populatedTask);
+  emitToTask(taskId, 'task:updated', populatedTask);
+
+  res.status(201).json({
+    success: true,
+    data: populatedTask.subtasks,
+    taskStatus: task.status
+  });
+});
+
+// @desc    Update Minitask (Level 3)
+// @route   PATCH /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId
+// @access  Private
+const updateMinitask = asyncHandler(async (req, res) => {
+  const { taskId, subtaskId, minitaskId } = req.params;
+  const { title, description, startDate, dueDate, assigneeId, status, isCompleted } = req.body;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return res.status(404).json({ success: false, error: 'Task not found' });
+  }
+
+  const subtask = task.subtasks.id(subtaskId);
+  if (!subtask) {
+    return res.status(404).json({ success: false, error: 'Subtask not found' });
+  }
+
+  const minitask = subtask.minitasks.id(minitaskId);
+  if (!minitask) {
+    return res.status(404).json({ success: false, error: 'Mini-task not found' });
+  }
+
+  const project = await Project.findById(task.projectId);
+  const isMainAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
+  const isSubtaskAssignee = subtask.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
+  const isMiniAssignee = minitask.assigneeId && (minitask.assigneeId._id || minitask.assigneeId).toString() === req.user._id.toString();
+  const perm = await checkTaskPermission(req.user, project, task, 'UPDATE', req);
+
+  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMiniAssignee) {
+    return res.status(403).json({ success: false, error: 'Permission denied to update mini-task' });
+  }
+
+  if (title !== undefined) minitask.title = title.trim();
+  if (description !== undefined) minitask.description = description ? description.trim() : '';
+  if (startDate !== undefined) minitask.startDate = startDate ? new Date(startDate) : null;
+  if (dueDate !== undefined) minitask.dueDate = dueDate ? new Date(dueDate) : null;
+  if (assigneeId !== undefined && perm.allowed) {
+    minitask.assigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
+  }
+  if (status !== undefined) {
+    minitask.status = status;
+    if (status === 'DONE') {
+      minitask.isCompleted = true;
+      minitask.completedAt = new Date();
+    } else {
+      minitask.isCompleted = false;
+      minitask.completedAt = null;
+    }
+  }
+  if (isCompleted !== undefined) {
+    minitask.isCompleted = Boolean(isCompleted);
+    if (minitask.isCompleted) {
+      minitask.status = 'DONE';
+      minitask.completedAt = new Date();
+    } else {
+      if (minitask.status === 'DONE') minitask.status = 'TODO';
+      minitask.completedAt = null;
+    }
+  }
+
+  const stages = getWorkflowStagesForTask(project, task.team);
+
+  // Roll-up: Subtask stage is dynamically computed from its mini-tasks!
+  if (Array.isArray(subtask.minitasks) && subtask.minitasks.length > 0) {
+    subtask.status = computeParentTaskStatus(subtask.minitasks, stages, subtask.status);
+    const lastStageId = stages && stages.length > 0 ? stages[stages.length - 1].id : null;
+    const allMinisDone = subtask.minitasks.every((m) => m.isCompleted || (lastStageId && m.status === lastStageId) || m.status === 'DONE');
+    if (allMinisDone) {
+      subtask.isCompleted = true;
+      subtask.completedAt = subtask.completedAt || new Date();
+    } else {
+      subtask.isCompleted = false;
+      subtask.completedAt = null;
+    }
+  }
+
+  // Roll-up: Main Task stage is dynamically computed from its subtasks!
+  task.status = computeParentTaskStatus(task.subtasks, stages, task.status);
+
+  task.updatedBy = req.user._id;
+  await task.save();
+
+  await CacheService.invalidateProject(task.projectId);
+  await CacheService.invalidatePattern(`kanban:${task.projectId}*`);
+
+  const populatedTask = await Task.findById(taskId)
+    .populate('subtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
+
+  emitToProject(task.projectId, 'task:updated', populatedTask);
+  emitToTask(taskId, 'task:updated', populatedTask);
+
+  res.json({
+    success: true,
+    data: populatedTask.subtasks,
+    taskStatus: task.status
+  });
+});
+
+// @desc    Delete Minitask (Level 3)
+// @route   DELETE /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId
+// @access  Private
+const deleteMinitask = asyncHandler(async (req, res) => {
+  const { taskId, subtaskId, minitaskId } = req.params;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return res.status(404).json({ success: false, error: 'Task not found' });
+  }
+
+  if (task.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (task.lockedBy) {
+      try {
+        const locker = await User.findById(task.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Parent task is locked by ${lockerName}. Child mini-tasks cannot be deleted while locked.`
+    });
+  }
+
+  const subtask = task.subtasks.id(subtaskId);
+  if (!subtask) {
+    return res.status(404).json({ success: false, error: 'Subtask not found' });
+  }
+
+  if (subtask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (subtask.lockedBy) {
+      try {
+        const locker = await User.findById(subtask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Parent subtask is locked by ${lockerName}. Child mini-tasks cannot be deleted while locked.`
+    });
+  }
+
+  const minitask = subtask.minitasks ? subtask.minitasks.id(minitaskId) : null;
+  if (!minitask) {
+    return res.status(404).json({ success: false, error: 'Mini-task not found' });
+  }
+
+  if (minitask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (minitask.lockedBy) {
+      try {
+        const locker = await User.findById(minitask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `This mini-task is locked by ${lockerName} and cannot be deleted. Only ${lockerName} can unlock it.`
+    });
+  }
+
+  const project = await Project.findById(task.projectId);
+  const isMainAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
+  const isSubtaskAssignee = subtask.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
+  const perm = await checkTaskPermission(req.user, project, task, 'DELETE_SUBTASK', req);
+
+  const isMiniAssignee = minitask?.assigneeId && (minitask.assigneeId._id || minitask.assigneeId).toString() === req.user._id.toString();
+
+  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMiniAssignee) {
+    return res.status(403).json({ success: false, error: 'Permission denied to delete mini-task' });
+  }
+
+  subtask.minitasks = (subtask.minitasks || []).filter((m) => m._id.toString() !== minitaskId);
+
+  const stages = getWorkflowStagesForTask(project, task.team);
+  if (Array.isArray(subtask.minitasks) && subtask.minitasks.length > 0) {
+    subtask.status = computeParentTaskStatus(subtask.minitasks, stages, subtask.status);
+  }
+  task.status = computeParentTaskStatus(task.subtasks, stages, task.status);
+
+  task.updatedBy = req.user._id;
+  await task.save();
+
+  await CacheService.invalidateProject(task.projectId);
+  await CacheService.invalidatePattern(`kanban:${task.projectId}*`);
+
+  const populatedTask = await Task.findById(taskId)
+    .populate('subtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
+
+  emitToProject(task.projectId, 'task:updated', populatedTask);
+  emitToTask(taskId, 'task:updated', populatedTask);
+
+  res.json({
+    success: true,
+    data: populatedTask.subtasks,
+    taskStatus: task.status
+  });
+});
+
+// @desc    Add Microtask to Minitask (Level 4)
+// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks
+// @access  Private
+const addMicrotask = asyncHandler(async (req, res) => {
+  const { taskId, subtaskId, minitaskId } = req.params;
+  const { title, description, startDate, dueDate, assigneeId, status } = req.body;
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ success: false, error: 'Microtask title is required' });
+  }
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return res.status(404).json({ success: false, error: 'Task not found' });
+  }
+
+  const subtask = task.subtasks.id(subtaskId);
+  if (!subtask) {
+    return res.status(404).json({ success: false, error: 'Subtask not found' });
+  }
+
+  const minitask = subtask.minitasks ? subtask.minitasks.id(minitaskId) : null;
+  if (!minitask) {
+    return res.status(404).json({ success: false, error: 'Mini-task not found' });
+  }
+
+  const project = await Project.findById(task.projectId);
+  const isMainAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
+  const isSubtaskAssignee = subtask.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
+  const isMiniAssignee = minitask.assigneeId && (minitask.assigneeId._id || minitask.assigneeId).toString() === req.user._id.toString();
+  const perm = await checkTaskPermission(req.user, project, task, 'CREATE_SUBTASK', req);
+
+  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMiniAssignee) {
+    return res.status(403).json({ success: false, error: 'Permission denied to add micro-task' });
+  }
+
+  if (!minitask.microtasks) {
+    minitask.microtasks = [];
+  }
+
+  const microIndex = minitask.microtasks.length + 1;
+  let microKey = '';
+  if (minitask.key) {
+    microKey = minitask.key.replace('-MIN-', '-MIC-') + `-${microIndex}`;
+  } else {
+    microKey = `${subtask.key || task.key || 'TASK'}-MIC-${microIndex}`;
+  }
+
+  let safeAssigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
+  // If user is Level 4 (normal member, !perm.allowed): auto-assign to self!
+  if (!perm.allowed) {
+    safeAssigneeId = req.user._id;
+  }
 
   const newMicrotask = {
     key: microKey,
@@ -1516,15 +1933,13 @@ const addMicrotask = asyncHandler(async (req, res) => {
     createdAt: new Date()
   };
 
-  subtask.microtasks.push(newMicrotask);
+  minitask.microtasks.push(newMicrotask);
 
-  // If microtask is created under subtask, subtask assignee must be blank/unassigned (assigned at microtask level)
-  subtask.assigneeId = null;
-  // Main task assignee must also be blank/unassigned
-  task.assigneeId = null;
-
-  // Automatically sync / expand subtask and main task dates
+  // Automatically sync / expand dates upwards
   if (newMicrotask.startDate) {
+    if (!minitask.startDate || newMicrotask.startDate < new Date(minitask.startDate)) {
+      minitask.startDate = newMicrotask.startDate;
+    }
     if (!subtask.startDate || newMicrotask.startDate < new Date(subtask.startDate)) {
       subtask.startDate = newMicrotask.startDate;
     }
@@ -1533,6 +1948,9 @@ const addMicrotask = asyncHandler(async (req, res) => {
     }
   }
   if (newMicrotask.dueDate) {
+    if (!minitask.dueDate || newMicrotask.dueDate > new Date(minitask.dueDate)) {
+      minitask.dueDate = newMicrotask.dueDate;
+    }
     if (!subtask.dueDate || newMicrotask.dueDate > new Date(subtask.dueDate)) {
       subtask.dueDate = newMicrotask.dueDate;
     }
@@ -1553,6 +1971,7 @@ const addMicrotask = asyncHandler(async (req, res) => {
     newValue: title.trim(),
     metadata: {
       subtaskId,
+      minitaskId,
       microtaskId: newMicrotask._id,
       microtaskKey: microKey,
       title: title.trim()
@@ -1565,8 +1984,10 @@ const addMicrotask = asyncHandler(async (req, res) => {
   const populatedTask = await Task.findById(taskId)
     .populate('subtasks.assigneeId', 'name email avatar')
     .populate('subtasks.createdBy', 'name email')
-    .populate('subtasks.microtasks.assigneeId', 'name email avatar')
-    .populate('subtasks.microtasks.createdBy', 'name email');
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
 
   emitToProject(task.projectId, 'task:updated', populatedTask);
   emitToTask(taskId, 'task:updated', populatedTask);
@@ -1578,11 +1999,11 @@ const addMicrotask = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update Microtask (Title, Description, Dates, Status, Assignee, Completion)
-// @route   PATCH /api/v1/tasks/:taskId/subtasks/:subtaskId/microtasks/:microtaskId
+// @desc    Update Microtask (Title, Description, Dates, Status, Assignee, Completion) (Level 4)
+// @route   PATCH /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks/:microtaskId
 // @access  Private
 const updateMicrotask = asyncHandler(async (req, res) => {
-  const { taskId, subtaskId, microtaskId } = req.params;
+  const { taskId, subtaskId, minitaskId, microtaskId } = req.params;
   const { title, description, startDate, dueDate, assigneeId, status, isCompleted } = req.body;
 
   const task = await Task.findById(taskId);
@@ -1595,7 +2016,12 @@ const updateMicrotask = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, error: 'Subtask not found' });
   }
 
-  const microtask = subtask.microtasks.id(microtaskId);
+  const minitask = subtask.minitasks ? subtask.minitasks.id(minitaskId) : null;
+  if (!minitask) {
+    return res.status(404).json({ success: false, error: 'Mini-task not found' });
+  }
+
+  const microtask = minitask.microtasks ? minitask.microtasks.id(microtaskId) : null;
   if (!microtask) {
     return res.status(404).json({ success: false, error: 'Microtask not found' });
   }
@@ -1603,18 +2029,19 @@ const updateMicrotask = asyncHandler(async (req, res) => {
   const project = await Project.findById(task.projectId);
   const isMainAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
   const isSubtaskAssignee = subtask.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
+  const isMiniAssignee = minitask.assigneeId && (minitask.assigneeId._id || minitask.assigneeId).toString() === req.user._id.toString();
   const isMicroAssignee = microtask.assigneeId && (microtask.assigneeId._id || microtask.assigneeId).toString() === req.user._id.toString();
   const perm = await checkTaskPermission(req.user, project, task, 'UPDATE', req);
 
-  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMicroAssignee) {
-    return res.status(403).json({ success: false, error: 'Permission denied to update microtask' });
+  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMiniAssignee && !isMicroAssignee) {
+    return res.status(403).json({ success: false, error: 'Permission denied to update micro-task' });
   }
 
   if (title !== undefined) microtask.title = title.trim();
   if (description !== undefined) microtask.description = description ? description.trim() : '';
   if (startDate !== undefined) microtask.startDate = startDate ? new Date(startDate) : null;
   if (dueDate !== undefined) microtask.dueDate = dueDate ? new Date(dueDate) : null;
-  if (assigneeId !== undefined) {
+  if (assigneeId !== undefined && perm.allowed) {
     microtask.assigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
   }
   if (status !== undefined) {
@@ -1640,12 +2067,26 @@ const updateMicrotask = asyncHandler(async (req, res) => {
 
   const stages = getWorkflowStagesForTask(project, task.team);
 
-  // Roll-up: Subtask stage is dynamically computed from its microtasks!
-  if (Array.isArray(subtask.microtasks) && subtask.microtasks.length > 0) {
-    subtask.status = computeParentTaskStatus(subtask.microtasks, stages, subtask.status);
+  // 1. Roll-up Microtasks -> Minitask!
+  if (Array.isArray(minitask.microtasks) && minitask.microtasks.length > 0) {
+    minitask.status = computeParentTaskStatus(minitask.microtasks, stages, minitask.status);
     const lastStageId = stages && stages.length > 0 ? stages[stages.length - 1].id : null;
-    const allMicrosDone = subtask.microtasks.every((m) => m.isCompleted || (lastStageId && m.status === lastStageId) || m.status === 'DONE');
+    const allMicrosDone = minitask.microtasks.every((m) => m.isCompleted || (lastStageId && m.status === lastStageId) || m.status === 'DONE');
     if (allMicrosDone) {
+      minitask.isCompleted = true;
+      minitask.completedAt = minitask.completedAt || new Date();
+    } else {
+      minitask.isCompleted = false;
+      minitask.completedAt = null;
+    }
+  }
+
+  // 2. Roll-up Minitasks -> Subtask!
+  if (Array.isArray(subtask.minitasks) && subtask.minitasks.length > 0) {
+    subtask.status = computeParentTaskStatus(subtask.minitasks, stages, subtask.status);
+    const lastStageId = stages && stages.length > 0 ? stages[stages.length - 1].id : null;
+    const allMinisDone = subtask.minitasks.every((m) => m.isCompleted || (lastStageId && m.status === lastStageId) || m.status === 'DONE');
+    if (allMinisDone) {
       subtask.isCompleted = true;
       subtask.completedAt = subtask.completedAt || new Date();
     } else {
@@ -1654,7 +2095,7 @@ const updateMicrotask = asyncHandler(async (req, res) => {
     }
   }
 
-  // Roll-up: Main Task stage is dynamically computed from its subtasks!
+  // 3. Roll-up Subtasks -> Main Task!
   task.status = computeParentTaskStatus(task.subtasks, stages, task.status);
 
   task.updatedBy = req.user._id;
@@ -1666,8 +2107,10 @@ const updateMicrotask = asyncHandler(async (req, res) => {
   const populatedTask = await Task.findById(taskId)
     .populate('subtasks.assigneeId', 'name email avatar')
     .populate('subtasks.createdBy', 'name email')
-    .populate('subtasks.microtasks.assigneeId', 'name email avatar')
-    .populate('subtasks.microtasks.createdBy', 'name email');
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
 
   emitToProject(task.projectId, 'task:updated', populatedTask);
   emitToTask(taskId, 'task:updated', populatedTask);
@@ -1679,15 +2122,29 @@ const updateMicrotask = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Delete Microtask
-// @route   DELETE /api/v1/tasks/:taskId/subtasks/:subtaskId/microtasks/:microtaskId
+// @desc    Delete Microtask (Level 4)
+// @route   DELETE /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks/:microtaskId
 // @access  Private
 const deleteMicrotask = asyncHandler(async (req, res) => {
-  const { taskId, subtaskId, microtaskId } = req.params;
+  const { taskId, subtaskId, minitaskId, microtaskId } = req.params;
 
   const task = await Task.findById(taskId);
   if (!task) {
     return res.status(404).json({ success: false, error: 'Task not found' });
+  }
+
+  if (task.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (task.lockedBy) {
+      try {
+        const locker = await User.findById(task.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Parent task is locked by ${lockerName}. Child micro-tasks cannot be deleted while locked.`
+    });
   }
 
   const subtask = task.subtasks.id(subtaskId);
@@ -1695,18 +2152,79 @@ const deleteMicrotask = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, error: 'Subtask not found' });
   }
 
+  if (subtask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (subtask.lockedBy) {
+      try {
+        const locker = await User.findById(subtask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Parent subtask is locked by ${lockerName}. Child micro-tasks cannot be deleted while locked.`
+    });
+  }
+
+  const minitask = subtask.minitasks ? subtask.minitasks.id(minitaskId) : null;
+  if (!minitask) {
+    return res.status(404).json({ success: false, error: 'Mini-task not found' });
+  }
+
+  if (minitask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (minitask.lockedBy) {
+      try {
+        const locker = await User.findById(minitask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `Parent mini-task is locked by ${lockerName}. Child micro-tasks cannot be deleted while locked.`
+    });
+  }
+
+  const microtask = minitask.microtasks ? minitask.microtasks.id(microtaskId) : null;
+  if (!microtask) {
+    return res.status(404).json({ success: false, error: 'Microtask not found' });
+  }
+
+  if (microtask.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (microtask.lockedBy) {
+      try {
+        const locker = await User.findById(microtask.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `This micro-task is locked by ${lockerName} and cannot be deleted. Only ${lockerName} can unlock it.`
+    });
+  }
+
   const project = await Project.findById(task.projectId);
   const isMainAssignee = task.assigneeId && (task.assigneeId._id || task.assigneeId).toString() === req.user._id.toString();
   const isSubtaskAssignee = subtask.assigneeId && (subtask.assigneeId._id || subtask.assigneeId).toString() === req.user._id.toString();
+  const isMiniAssignee = minitask.assigneeId && (minitask.assigneeId._id || minitask.assigneeId).toString() === req.user._id.toString();
   const perm = await checkTaskPermission(req.user, project, task, 'DELETE_SUBTASK', req);
 
-  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee) {
-    return res.status(403).json({ success: false, error: 'Permission denied to delete microtask' });
+  const isMicroAssignee = microtask?.assigneeId && (microtask.assigneeId._id || microtask.assigneeId).toString() === req.user._id.toString();
+
+  if (!perm.allowed && !isMainAssignee && !isSubtaskAssignee && !isMiniAssignee && !isMicroAssignee) {
+    return res.status(403).json({ success: false, error: 'Permission denied to delete micro-task' });
   }
 
-  subtask.microtasks = (subtask.microtasks || []).filter((m) => m._id.toString() !== microtaskId);
+  minitask.microtasks = (minitask.microtasks || []).filter((m) => m._id.toString() !== microtaskId);
 
   const stages = getWorkflowStagesForTask(project, task.team);
+  if (Array.isArray(minitask.microtasks) && minitask.microtasks.length > 0) {
+    minitask.status = computeParentTaskStatus(minitask.microtasks, stages, minitask.status);
+  }
+  if (Array.isArray(subtask.minitasks) && subtask.minitasks.length > 0) {
+    subtask.status = computeParentTaskStatus(subtask.minitasks, stages, subtask.status);
+  }
   task.status = computeParentTaskStatus(task.subtasks, stages, task.status);
 
   task.updatedBy = req.user._id;
@@ -1718,8 +2236,10 @@ const deleteMicrotask = asyncHandler(async (req, res) => {
   const populatedTask = await Task.findById(taskId)
     .populate('subtasks.assigneeId', 'name email avatar')
     .populate('subtasks.createdBy', 'name email')
-    .populate('subtasks.microtasks.assigneeId', 'name email avatar')
-    .populate('subtasks.microtasks.createdBy', 'name email');
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.createdBy', 'name email')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.createdBy', 'name email');
 
   emitToProject(task.projectId, 'task:updated', populatedTask);
   emitToTask(taskId, 'task:updated', populatedTask);
@@ -2117,6 +2637,22 @@ const deleteTask = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, error: 'Task not found' });
   }
 
+  // If task is locked, deletion is completely blocked!
+  // "who locke that person only can remove that lock"
+  if (task.isLocked) {
+    let lockerName = 'a Team Lead/Admin';
+    if (task.lockedBy) {
+      try {
+        const locker = await User.findById(task.lockedBy).select('name');
+        if (locker?.name) lockerName = locker.name;
+      } catch (_) {}
+    }
+    return res.status(403).json({
+      success: false,
+      error: `This task is locked by ${lockerName} and cannot be deleted. Only ${lockerName} can unlock it.`
+    });
+  }
+
   const project = await Project.findById(task.projectId);
   const perm = await checkTaskPermission(req.user, project, task, 'DELETE', req);
 
@@ -2228,6 +2764,184 @@ const toggleRestrictTask = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Toggle Task / Subtask / Mini-task / Microtask Lock (When locked, cannot be deleted; only the person who locked it can unlock)
+// @route   POST /api/v1/tasks/:taskId/lock
+// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/lock
+// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/lock
+// @route   POST /api/v1/tasks/:taskId/subtasks/:subtaskId/minitasks/:minitaskId/microtasks/:microtaskId/lock
+// @access  Private (Org Admin, PM, Team Lead)
+const toggleLockTask = asyncHandler(async (req, res) => {
+  const { taskId } = req.params;
+  const subtaskId = req.params.subtaskId || req.body?.subtaskId || req.query?.subtaskId;
+  const minitaskId = req.params.minitaskId || req.body?.minitaskId || req.query?.minitaskId;
+  const microtaskId = req.params.microtaskId || req.body?.microtaskId || req.query?.microtaskId;
+
+  const task = await Task.findById(taskId);
+  if (!task) {
+    return res.status(404).json({ success: false, error: 'Task not found' });
+  }
+
+  const project = await Project.findById(task.projectId);
+  const perm = await checkTaskPermission(req.user, project, task, 'UPDATE', req);
+
+  const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+  const isOrgAdmin = req.user.role === 'ORG_ADMIN' || req.user.userLevel === 1;
+  const isPM = (project?.leadId && (project.leadId._id || project.leadId).toString() === req.user._id.toString()) ||
+    req.user.role === 'PROJECT_MANAGER' || req.user.userLevel === 2;
+  const isTeamLead = perm.isTeamLead;
+
+  // Only Org Admin, PM, or Team Lead can lock/unlock tasks
+  if (!isSuperAdmin && !isOrgAdmin && !isPM && !isTeamLead) {
+    return res.status(403).json({
+      success: false,
+      error: 'Permission denied: Only Team Leads, Project Managers, and Organization Admins can lock tasks'
+    });
+  }
+
+  // Determine target item to lock/unlock:
+  let target = task;
+  let targetLevel = 'task'; // 'task' | 'subtask' | 'mini-task' | 'micro-task'
+  let targetTitle = task.title || task.key;
+
+  let subtask = null;
+  let minitask = null;
+  let microtask = null;
+
+  if (subtaskId) {
+    subtask = task.subtasks.id(subtaskId);
+    if (!subtask) {
+      return res.status(404).json({ success: false, error: 'Subtask not found' });
+    }
+    target = subtask;
+    targetLevel = 'subtask';
+    targetTitle = subtask.title || subtask.key;
+
+    if (minitaskId) {
+      minitask = subtask.minitasks ? subtask.minitasks.id(minitaskId) : null;
+      if (!minitask) {
+        return res.status(404).json({ success: false, error: 'Mini-task not found' });
+      }
+      target = minitask;
+      targetLevel = 'mini-task';
+      targetTitle = minitask.title || minitask.key;
+
+      if (microtaskId) {
+        microtask = minitask.microtasks ? minitask.microtasks.id(microtaskId) : null;
+        if (!microtask) {
+          return res.status(404).json({ success: false, error: 'Microtask not found' });
+        }
+        target = microtask;
+        targetLevel = 'micro-task';
+        targetTitle = microtask.title || microtask.key;
+      }
+    }
+  }
+
+  // If target is ALREADY locked -> check who is unlocking it!
+  // USER REQUIREMENT: "who locke that person only can remove that lock"
+  if (target.isLocked) {
+    const isLocker = target.lockedBy && target.lockedBy.toString() === req.user._id.toString();
+    if (!isLocker && !isSuperAdmin) {
+      let lockerName = 'the user who locked it';
+      if (target.lockedBy) {
+        try {
+          const locker = await User.findById(target.lockedBy).select('name');
+          if (locker?.name) lockerName = locker.name;
+        } catch (_) {}
+      }
+
+      return res.status(403).json({
+        success: false,
+        error: `Only ${lockerName} (who locked this ${targetLevel}) can remove the lock.`
+      });
+    }
+
+    // Unlock target
+    target.isLocked = false;
+    target.lockedBy = null;
+    target.lockedAt = null;
+    task.updatedBy = req.user._id;
+    await task.save();
+
+    await Activity.create({
+      taskId: task._id,
+      projectId: task.projectId,
+      userId: req.user._id,
+      action: 'UNLOCKED',
+      newValue: `${targetLevel.toUpperCase()} "${targetTitle}" unlocked by ${req.user.name || 'user'}. Deletion is now permitted.`
+    });
+
+    await CacheService.invalidateProject(task.projectId);
+    await CacheService.invalidatePattern(`kanban:${task.projectId}*`);
+
+    const populatedTask = await Task.findById(taskId)
+      .populate('assigneeId', 'name email avatar jobTitle')
+      .populate('reporterId', 'name email avatar jobTitle')
+      .populate('lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.lockedBy', 'name email avatar jobTitle')
+      .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+      .populate('subtasks.minitasks.microtasks.lockedBy', 'name email avatar jobTitle')
+      .lean();
+
+    emitToTask(taskId, 'task:updated', populatedTask);
+    emitToProject(task.projectId, 'task:updated', populatedTask);
+
+    return res.json({
+      success: true,
+      isLocked: false,
+      targetLevel,
+      message: `${targetLevel.charAt(0).toUpperCase() + targetLevel.slice(1)} unlocked successfully. Deletion is now permitted.`,
+      data: populatedTask
+    });
+  }
+
+  // Lock target
+  target.isLocked = true;
+  target.lockedBy = req.user._id;
+  target.lockedAt = new Date();
+  task.updatedBy = req.user._id;
+  await task.save();
+
+  await Activity.create({
+    taskId: task._id,
+    projectId: task.projectId,
+    userId: req.user._id,
+    action: 'LOCKED',
+    newValue: `${targetLevel.toUpperCase()} "${targetTitle}" locked by ${req.user.name || 'user'}. Deletion is blocked.`
+  });
+
+  await CacheService.invalidateProject(task.projectId);
+  await CacheService.invalidatePattern(`kanban:${task.projectId}*`);
+
+  const populatedTask = await Task.findById(taskId)
+    .populate('assigneeId', 'name email avatar jobTitle')
+    .populate('reporterId', 'name email avatar jobTitle')
+    .populate('lockedBy', 'name email avatar jobTitle')
+    .populate('subtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.lockedBy', 'name email avatar jobTitle')
+    .populate('subtasks.minitasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.lockedBy', 'name email avatar jobTitle')
+    .populate('subtasks.minitasks.microtasks.assigneeId', 'name email avatar')
+    .populate('subtasks.minitasks.microtasks.lockedBy', 'name email avatar jobTitle')
+    .lean();
+
+  emitToTask(taskId, 'task:updated', populatedTask);
+  emitToProject(task.projectId, 'task:updated', populatedTask);
+
+  res.json({
+    success: true,
+    isLocked: true,
+    targetLevel,
+    lockedBy: req.user,
+    lockedAt: target.lockedAt,
+    message: `${targetLevel.charAt(0).toUpperCase() + targetLevel.slice(1)} locked by ${req.user.name || 'you'}. Deletion is now blocked for all users until you unlock it.`,
+    data: populatedTask
+  });
+});
+
 module.exports = {
   getTasks,
   getTaskById,
@@ -2242,6 +2956,9 @@ module.exports = {
   addMicrotask,
   updateMicrotask,
   deleteMicrotask,
+  addMinitask,
+  updateMinitask,
+  deleteMinitask,
   logWork,
   linkTask,
   unlinkTask,
@@ -2250,5 +2967,6 @@ module.exports = {
   deleteAttachment,
   toggleWatchTask,
   toggleRestrictTask,
+  toggleLockTask,
   deleteTask
 };
