@@ -62,6 +62,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
+import { LogoutConfirmModal } from '../components/LogoutConfirmModal';
 
 export type TabType =
   | 'dashboard'
@@ -98,7 +99,8 @@ export default function DashboardPage() {
     projects,
     fetchProjects,
     currentProject,
-    setCurrentProject
+    setCurrentProject,
+    logout
   } = useAuthStore();
 
   // Project Tabs states - restored seamlessly on refresh from URL or tab-isolated sessionStorage
@@ -130,6 +132,7 @@ export default function DashboardPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<any | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
 
   const { canView, canCreate, fetchPermissions, isLoading: permissionsLoading } = usePermissionStore();
 
@@ -324,22 +327,75 @@ export default function DashboardPage() {
       const url = new URL(window.location.href);
       if (url.searchParams.get('tab') !== activeTab) {
         url.searchParams.set('tab', activeTab);
-        window.history.replaceState(null, '', url.toString());
+        window.history.replaceState({ view: 'outdid-app', tab: activeTab }, '', url.toString());
       }
     }
   }, [activeTab]);
 
-  // Support browser Back/Forward navigation between views
+  // Support browser Back button: Close any active modal first; if none open, prompt for logout confirmation
   useEffect(() => {
-    const handlePopState = () => {
-      const urlTab = new URLSearchParams(window.location.search).get('tab');
-      if (urlTab) {
-        setActiveTab(urlTab as TabType);
+    if (!isAuthenticated) return;
+
+    // Push initial baseline history entry so back button fires popstate rather than exiting to /login
+    if (typeof window !== 'undefined' && window.history.state?.view !== 'outdid-app') {
+      window.history.pushState({ view: 'outdid-app' }, '', window.location.href);
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      // Re-push history entry so the browser stays within the app until user confirms logout
+      window.history.pushState({ view: 'outdid-app' }, '', window.location.href);
+
+      // 1. If any modal is open, close that modal first
+      if (isTaskModalOpen) {
+        setIsTaskModalOpen(false);
+        return;
       }
+      if (isProfileOpen) {
+        setIsProfileOpen(false);
+        return;
+      }
+      if (isInviteModalOpen) {
+        setIsInviteModalOpen(false);
+        return;
+      }
+      if (isNewProjectOpen) {
+        setIsNewProjectOpen(false);
+        return;
+      }
+      if (isSubscriptionOpen) {
+        setIsSubscriptionOpen(false);
+        return;
+      }
+      if (isHelpCenterOpen) {
+        setIsHelpCenterOpen(false);
+        return;
+      }
+      if (isGraphModalOpen) {
+        setIsGraphModalOpen(false);
+        return;
+      }
+      if (projectToDelete) {
+        setProjectToDelete(null);
+        return;
+      }
+
+      // 2. If no modal is open, ask if user wants to log out
+      setIsLogoutConfirmOpen(true);
     };
+
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [
+    isAuthenticated,
+    isTaskModalOpen,
+    isProfileOpen,
+    isInviteModalOpen,
+    isNewProjectOpen,
+    isSubscriptionOpen,
+    isHelpCenterOpen,
+    isGraphModalOpen,
+    projectToDelete
+  ]);
 
   // Safe fallback to first permitted tab only after workspace, auth, and permissions have finished loading
   useEffect(() => {
@@ -749,6 +805,17 @@ export default function DashboardPage() {
 
       {/* Global Project Assignment Notification Modal upon Login/Assignment */}
       <ProjectAssignmentModal onOpenProject={() => setActiveTab('board')} />
+
+      {/* Logout Confirmation Modal on Back Navigation */}
+      <LogoutConfirmModal
+        isOpen={isLogoutConfirmOpen}
+        onClose={() => setIsLogoutConfirmOpen(false)}
+        onConfirmLogout={() => {
+          setIsLogoutConfirmOpen(false);
+          logout(false);
+        }}
+        user={user}
+      />
     </div>
   );
 }

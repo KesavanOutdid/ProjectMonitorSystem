@@ -271,6 +271,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             'Level 3 – Mini Tasks': 'Create login form layout',
             'Level 4 – Micro Tasks': '',
             'Task Description': 'Design responsive login UI',
+            'Start Date': formatDate(p1Start),
+            'End Date': formatDate(addDays(p1Start, 3)),
             'Duration (Days)': 3,
             'Priority': 'HIGH',
             'Status': 'TODO',
@@ -287,6 +289,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             'Level 3 – Mini Tasks': 'JWT Authentication Service',
             'Level 4 – Micro Tasks': 'Write unit tests for JWT validator',
             'Task Description': 'Check edge cases and token expiry',
+            'Start Date': formatDate(addDays(p1Start, 3)),
+            'End Date': formatDate(addDays(p1Start, 4)),
             'Duration (Days)': 1,
             'Priority': 'MEDIUM',
             'Status': 'TODO',
@@ -306,6 +310,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           { wch: 38 }, // Level 3 – Mini Tasks
           { wch: 38 }, // Level 4 – Micro Tasks
           { wch: 44 }, // Task Description
+          { wch: 16 }, // Start Date
+          { wch: 16 }, // End Date
           { wch: 16 }, // Duration (Days)
           { wch: 14 }, // Priority
           { wch: 16 }, // Status
@@ -324,12 +330,16 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           { 'Column': 'Level 2 – Subtask', 'Required': 'Optional', 'Description': 'Development Subtask under the preceding Main Task.' },
           { 'Column': 'Level 3 – Mini Tasks', 'Required': 'Optional', 'Description': 'Mini-task under the preceding Subtask.' },
           { 'Column': 'Level 4 – Micro Tasks', 'Required': 'Optional', 'Description': 'Micro-task checklist item under the preceding Mini-task.' },
-          { 'Column': 'Task Key', 'Required': 'Optional', 'Description': 'Format: PROJECT-TASKTYPE-TEAM-NUMBER. Main Task: R-MT-HE-107 or R-MT-GEN-1. Subtask: R-ST-HE-107-1. Leave blank to auto-create, or specify existing key to UPDATE.' },
+          { 'Column': 'Task Key', 'Required': 'Optional', 'Description': 'Format: PROJECT-TASKTYPE-TEAM-CODE. Main Task: RAD-MT-SW-AL or RAD-MT-SW-DRI. Subtask: RAD-ST-SW-AL-1. Leave blank to auto-generate mnemonic code from title, or specify existing key to UPDATE.' },
           { 'Column': 'Task Description', 'Required': 'Optional', 'Description': 'Detailed specifications, requirements, or acceptance criteria.' },
+
+          { 'Column': 'Start Date', 'Required': 'Optional', 'Description': 'Start date in YYYY-MM-DD. Auto-defaults or left blank if not specified.' },
+          { 'Column': 'End Date (Stop Date)', 'Required': 'Optional', 'Description': 'End date in YYYY-MM-DD. Auto-computed from Start Date + Duration if omitted.' },
           { 'Column': 'Duration (Days)', 'Required': 'Optional', 'Description': 'Estimated working days for the activity.' },
           { 'Column': 'Priority & Status', 'Required': 'Optional', 'Description': 'Priority: LOW, MEDIUM, HIGH, URGENT / Status: TODO, IN_PROGRESS, IN_REVIEW, DONE' },
           { 'Column': 'Team & Assignee', 'Required': 'Optional', 'Description': 'Discipline and Owner according to your project.' }
         ];
+
         const wsGuide = XLSX.utils.json_to_sheet(guideRows);
         wsGuide['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 80 }];
         XLSX.utils.book_append_sheet(wb, wsGuide, 'Timeline Guide');
@@ -1092,15 +1102,19 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
                         {/* Start Date */}
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">
-                          {new Date(t.startDate).toLocaleDateString()}
+                          {t.startDate ? new Date(t.startDate).toLocaleDateString() : '—'}
                         </td>
 
                         {/* Due Date */}
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 font-medium whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                            <Clock className="w-3 h-3 text-amber-500 shrink-0" />
-                            <span>{new Date(t.dueDate).toLocaleDateString()}</span>
-                          </span>
+                          {t.dueDate ? (
+                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                              <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                              <span>{new Date(t.dueDate).toLocaleDateString()}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal italic">—</span>
+                          )}
                         </td>
 
                         {/* Dependencies / Predecessors */}
@@ -1135,7 +1149,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
                         {/* Assignee with Email, Name & Team Member Check */}
                         <td className="py-2.5 px-3 min-w-[190px] whitespace-nowrap">
-                          {t.assigneeName ? (
+                          {t.assigneeName && !['unassigned', 'none', 'n/a', '-', 'tbd', 'null'].includes(t.assigneeName.toLowerCase().trim()) ? (
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-1.5 whitespace-nowrap">
                                 <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[9px] uppercase shrink-0">
@@ -1145,12 +1159,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                                   {t.assigneeName}
                                 </span>
                                 {t.isTeamMember === true && (
-                                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 shrink-0" title="Verified team member">
+                                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 shrink-0" title="Verified member of this team">
                                     ✓ In Team
                                   </span>
                                 )}
                                 {t.isTeamMember === false && (
-                                  <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 shrink-0" title="Not listed as a member of this team">
+                                  <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 shrink-0" title={`"${t.assigneeName}" is in the workspace/project but not registered in Team "${t.team || 'General'}". The task will still be imported and assigned to them.`}>
                                     ⚠️ Other Team
                                   </span>
                                 )}

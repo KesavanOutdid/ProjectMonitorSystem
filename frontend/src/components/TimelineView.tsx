@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 import { downloadProjectExcel } from '../lib/excelExport';
+import { formatSprintStatus } from '../lib/formatters';
 import { useAuthStore } from '../store/authStore';
 
 interface TimelineViewProps {
@@ -168,7 +169,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                         : 'bg-[#F3F4F6] text-[#111827]/70 border-[#0F172A]/10'
                     }`}
                   >
-                    {s.status}
+                    {formatSprintStatus(s.status)}
                   </span>
                 </div>
               </div>

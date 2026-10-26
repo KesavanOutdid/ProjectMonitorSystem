@@ -9,6 +9,8 @@ const Activity = require('../models/Activity');
 const Comment = require('../models/Comment');
 const asyncHandler = require('../middlewares/asyncHandler');
 const { emitToProject } = require('../config/socket');
+const { generateMnemonicTaskCode } = require('../utils/taskCodeGenerator');
+
 
 // 3 Predefined System Forms (Fixed, standard templates)
 const PREDEFINED_FORMS = [
@@ -594,12 +596,17 @@ const updateRequestStatus = asyncHandler(async (req, res) => {
     );
     let taskNumber = updatedProject?.taskCounter || 1;
     const projKey = project?.key || 'TASK';
-    const boardKey = `${projKey}-MT-${teamCode}-${taskNumber}`;
+    const cleanTitle = requestDoc.title.replace(/^\[.*?\]\s*/, '');
+    const existingTeamTasks = await Task.find({ projectId }).select('key').lean();
+    const usedKeys = new Set(existingTeamTasks.map((t) => t.key).filter(Boolean));
+    const taskCode = generateMnemonicTaskCode(cleanTitle, usedKeys);
+    const boardKey = `${projKey}-MT-${teamCode}-${taskCode}`;
 
     const newBoardTask = await Task.create({
       key: boardKey,
       taskNumber: Number(taskNumber),
-      title: requestDoc.title.replace(/^\[.*?\]\s*/, ''),
+      title: cleanTitle,
+
       description: `${requestDoc.description || ''}\n\n*Created by Team Lead from Request #${requestDoc.key}*`,
       issueType: requestDoc.requestType === 'BUG' ? 'BUG' : 'TASK',
       priority: priority || requestDoc.priority || 'MEDIUM',

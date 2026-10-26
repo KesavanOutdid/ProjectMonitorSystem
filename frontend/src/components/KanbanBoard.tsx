@@ -7,6 +7,7 @@ import api from '../lib/api';
 import { getSocket, joinProjectRoom, leaveProjectRoom } from '../lib/socket';
 import { broadcastSyncEvent, subscribeCrossTabSync } from '../lib/crossTabSync';
 import { useAuthStore } from '../store/authStore';
+import { formatSprintStatus } from '../lib/formatters';
 import { KanbanColumnSkeleton } from './Skeletons';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { ExcelImportModal } from './ExcelImportModal';
@@ -52,8 +53,10 @@ import {
   RefreshCw,
   X,
   Focus,
-  Eye
+  Eye,
+  Loader2
 } from 'lucide-react';
+
 import { downloadProjectExcel } from '../lib/excelExport';
 
 interface Microtask {
@@ -373,6 +376,26 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   // Task Family spotlight & focus states
   const [hoveredFamilyKey, setHoveredFamilyKey] = useState<string | null>(null);
   const [focusedFamilyKey, setFocusedFamilyKey] = useState<string | null>(null);
+
+  // Active Stage Updating Tracking (shows spinner / loading overlay while moving between stages until done)
+  const [updatingStageItems, setUpdatingStageItems] = useState<Record<string, { targetStatus: string; type: 'MAIN' | 'SUBTASK' | 'MINITASK' | 'MICROTASK' }>>({});
+
+  const markItemUpdating = (id: string, targetStatus: string, type: 'MAIN' | 'SUBTASK' | 'MINITASK' | 'MICROTASK') => {
+    setUpdatingStageItems((prev) => ({
+      ...prev,
+      [id]: { targetStatus, type }
+    }));
+  };
+
+  const clearItemUpdating = (id: string) => {
+    setUpdatingStageItems((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
 
   // Fetch Project Sprints
   const { data: sprints = [], isLoading: isLoadingSprints } = useQuery({
@@ -1056,12 +1079,49 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       const res = await api.patch(`/tasks/${taskId}/subtasks/${subtaskId}`, payload);
       return res.data;
     },
-    onSuccess: () => {
+    onMutate: async ({ taskId, subtaskId, status }) => {
+      if (status) {
+        markItemUpdating(subtaskId, status, 'SUBTASK');
+      }
+      await queryClient.cancelQueries({ queryKey: ['kanban'] });
+      const previousData = queryClient.getQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id]);
+
+      if (status) {
+        queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], (old: any) => {
+          if (!old) return old;
+          const newCols = { ...old };
+          Object.keys(newCols).forEach((colKey) => {
+            newCols[colKey] = (newCols[colKey] || []).map((t: Task) => {
+              if (t._id === taskId && Array.isArray(t.subtasks)) {
+                return {
+                  ...t,
+                  subtasks: t.subtasks.map((st: Subtask) => {
+                    if (st._id === subtaskId) {
+                      return { ...st, status };
+                    }
+                    return st;
+                  })
+                };
+              }
+              return t;
+            });
+          });
+          return newCols;
+        });
+      }
+
+      return { previousData, subtaskId };
+    },
+    onError: (err: any, variables, context: any) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], context.previousData);
+      }
+      alert(err.response?.data?.error || 'Failed to update subtask');
+    },
+    onSettled: (data, error, variables) => {
+      clearItemUpdating(variables.subtaskId);
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
       queryClient.invalidateQueries({ queryKey: ['project-summary'] });
-    },
-    onError: (err: any) => {
-      alert(err.response?.data?.error || 'Failed to update subtask');
     }
   });
 
@@ -1084,12 +1144,53 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       );
       return res.data;
     },
-    onSuccess: () => {
+    onMutate: async ({ taskId, subtaskId, minitaskId, status }) => {
+      markItemUpdating(minitaskId, status, 'MINITASK');
+      await queryClient.cancelQueries({ queryKey: ['kanban'] });
+      const previousData = queryClient.getQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id]);
+
+      queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], (old: any) => {
+        if (!old) return old;
+        const newCols = { ...old };
+        Object.keys(newCols).forEach((colKey) => {
+          newCols[colKey] = (newCols[colKey] || []).map((t: Task) => {
+            if (t._id === taskId && Array.isArray(t.subtasks)) {
+              return {
+                ...t,
+                subtasks: t.subtasks.map((st: Subtask) => {
+                  if (st._id === subtaskId && Array.isArray(st.minitasks)) {
+                    return {
+                      ...st,
+                      minitasks: st.minitasks.map((m: Minitask) => {
+                        if (m._id === minitaskId) {
+                          return { ...m, status };
+                        }
+                        return m;
+                      })
+                    };
+                  }
+                  return st;
+                })
+              };
+            }
+            return t;
+          });
+        });
+        return newCols;
+      });
+
+      return { previousData, minitaskId };
+    },
+    onError: (err: any, variables, context: any) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], context.previousData);
+      }
+      alert(err.response?.data?.error || 'Failed to update mini-task');
+    },
+    onSettled: (data, error, variables) => {
+      clearItemUpdating(variables.minitaskId);
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
       queryClient.invalidateQueries({ queryKey: ['project-summary'] });
-    },
-    onError: (err: any) => {
-      alert(err.response?.data?.error || 'Failed to update mini-task');
     }
   });
 
@@ -1114,14 +1215,64 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       );
       return res.data;
     },
-    onSuccess: () => {
+    onMutate: async ({ taskId, subtaskId, minitaskId, microtaskId, status }) => {
+      markItemUpdating(microtaskId, status, 'MICROTASK');
+      await queryClient.cancelQueries({ queryKey: ['kanban'] });
+      const previousData = queryClient.getQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id]);
+
+      queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], (old: any) => {
+        if (!old) return old;
+        const newCols = { ...old };
+        Object.keys(newCols).forEach((colKey) => {
+          newCols[colKey] = (newCols[colKey] || []).map((t: Task) => {
+            if (t._id === taskId && Array.isArray(t.subtasks)) {
+              return {
+                ...t,
+                subtasks: t.subtasks.map((st: Subtask) => {
+                  if (st._id === subtaskId && Array.isArray(st.minitasks)) {
+                    return {
+                      ...st,
+                      minitasks: st.minitasks.map((m: Minitask) => {
+                        if (m._id === minitaskId && Array.isArray(m.microtasks)) {
+                          return {
+                            ...m,
+                            microtasks: m.microtasks.map((mic: Microtask) => {
+                              if (mic._id === microtaskId) {
+                                return { ...mic, status };
+                              }
+                              return mic;
+                            })
+                          };
+                        }
+                        return m;
+                      })
+                    };
+                  }
+                  return st;
+                })
+              };
+            }
+            return t;
+          });
+        });
+        return newCols;
+      });
+
+      return { previousData, microtaskId };
+    },
+    onError: (err: any, variables, context: any) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], context.previousData);
+      }
+      alert(err.response?.data?.error || 'Failed to update microtask');
+    },
+    onSettled: (data, error, variables) => {
+      clearItemUpdating(variables.microtaskId);
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
       queryClient.invalidateQueries({ queryKey: ['project-summary'] });
-    },
-    onError: (err: any) => {
-      alert(err.response?.data?.error || 'Failed to update microtask');
     }
   });
+
 
   // Create Team Mutation
   const createTeamMutation = useMutation({
@@ -1325,6 +1476,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       return res.data;
     },
     onMutate: async ({ taskId, status }) => {
+      markItemUpdating(taskId, status, 'MAIN');
       await queryClient.cancelQueries({ queryKey: ['kanban', projectId, selectedSprintId, currentSprint?._id] });
       const previousData = queryClient.getQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id]);
 
@@ -1351,15 +1503,20 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         return newCols;
       });
 
-      return { previousData };
+      return { previousData, taskId };
     },
     onError: (err, newTodo, context: any) => {
       if (context?.previousData) {
         queryClient.setQueryData(['kanban', projectId, selectedSprintId, currentSprint?._id], context.previousData);
       }
+      alert((err as any)?.response?.data?.error || 'Failed to move task');
     },
-    onSettled: () => {
+    onSettled: (data, error, variables) => {
+      if (variables?.taskId) {
+        clearItemUpdating(variables.taskId);
+      }
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary'] });
     }
   });
 
@@ -1931,7 +2088,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               const sprintTeamsStr = s.teams && s.teams.length > 0 ? s.teams.join(', ') : 'All Teams';
               return (
                 <option key={s._id} value={s._id}>
-                  {s.name} {s.status === 'ACTIVE' ? '(Active)' : `• [${s.status}]`} — [{sprintTeamsStr}]
+                  {s.name} {s.status === 'ACTIVE' ? '(Active)' : `• [${formatSprintStatus(s.status)}]`} — [{sprintTeamsStr}]
                 </option>
               );
             })}
@@ -2451,13 +2608,16 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
             const totalColItems = colUnifiedItems.length;
             const isMenuOpen = openColumnMenuId === col.id;
+            const isColReceivingUpdate = Object.values(updatingStageItems).some((item) => item.targetStatus === col.id);
 
             return (
               <div
                 key={col.id}
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, col.id)}
-                className="flex-1 min-w-[260px] sm:min-w-[280px] md:min-w-[300px] max-w-[420px] bg-[#F4F5F7] border border-[#EBECF0] rounded-xl flex flex-col h-full max-h-full relative shadow-2xs transition-all"
+                className={`flex-1 min-w-[260px] sm:min-w-[280px] md:min-w-[300px] max-w-[420px] bg-[#F4F5F7] border ${
+                  isColReceivingUpdate ? 'border-blue-400 ring-2 ring-blue-400/30' : 'border-[#EBECF0]'
+                } rounded-xl flex flex-col h-full max-h-full relative shadow-2xs transition-all`}
               >
                 {/* Column Header */}
                 <div
@@ -2512,10 +2672,19 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {col.label}
                       </h3>
                     )}
-                    <span className="text-xs font-bold text-slate-600 bg-[#EBECF0] px-2 py-0.5 rounded-full shrink-0">
-                      {totalColItems}
+                    <span className="text-xs font-bold text-slate-600 bg-[#EBECF0] px-2 py-0.5 rounded-full shrink-0 flex items-center gap-1">
+                      {isColReceivingUpdate && (
+                        <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-600" />
+                      )}
+                      <span>{totalColItems}</span>
                     </span>
+                    {isColReceivingUpdate && (
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-100/90 border border-blue-200/80 px-2 py-0.5 rounded-full shrink-0 animate-pulse flex items-center gap-1">
+                        <span>Updating...</span>
+                      </span>
+                    )}
                   </div>
+
 
                   <div className="flex items-center gap-0.5 text-slate-400 relative">
                     {canCreateTask && (
@@ -2654,22 +2823,35 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       const task = item.task;
                       const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
                       const canDrag = canDragTask(task);
+                      const isCardUpdating = Boolean(updatingStageItems[task._id]);
 
                       return (
                       <div
                         key={task._id}
-                        draggable={canDrag}
-                        onDragStart={(e) => canDrag ? handleDragStart(e, task._id) : e.preventDefault()}
+                        draggable={canDrag && !isCardUpdating}
+                        onDragStart={(e) => canDrag && !isCardUpdating ? handleDragStart(e, task._id) : e.preventDefault()}
                         onClick={() => onSelectTask(task)}
                         onMouseEnter={() => setHoveredFamilyKey(familyKey)}
                         onMouseLeave={() => setHoveredFamilyKey(null)}
                         className={`bg-white hover:bg-white p-3 rounded-lg border border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-0 ${spotlightClass} ${
-                          canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                          isCardUpdating
+                            ? 'ring-2 ring-blue-500/80 ring-offset-1 pointer-events-none'
+                            : (canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')
                         } group flex flex-col gap-2 relative text-slate-800 border-l-[5px]`}
                         style={{
                           borderLeftColor: LEVEL_THEMES.MAIN.accentColor
                         }}
                       >
+                        {/* Loading Overlay when Stage is Updating */}
+                        {isCardUpdating && (
+                          <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] rounded-lg z-30 flex flex-col items-center justify-center gap-1.5 shadow-sm pointer-events-none transition-all animate-in fade-in duration-150">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50/95 border border-blue-200/90 rounded-full shadow-xs">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />
+                              <span className="text-xs font-bold text-blue-700">Updating stage...</span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Drag Grip Handle on hover, Quick Delete & Focus Button */}
                         <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
                           {focusBtn}
@@ -2818,7 +3000,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             <span className="font-mono font-bold text-slate-500 text-xs">
                               {task.key}
                             </span>
+                            {isCardUpdating && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-200 animate-pulse">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-600 shrink-0" />
+                                <span>Updating...</span>
+                              </span>
+                            )}
                           </div>
+
 
                           <div className="flex items-center gap-2">
                             {task.assigneeId ? (
@@ -2851,21 +3040,34 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       const { parent, subtask: st } = item;
                       const hasMicrotasks = Array.isArray(st.microtasks) && st.microtasks.length > 0;
                       const canDrag = canDragSubtask(parent, st);
+                      const isSubUpdating = Boolean(updatingStageItems[st._id]);
 
                       return (
                       <div
                         key={`${parent._id}-${st._id}`}
-                        draggable={canDrag}
-                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id) : e.preventDefault()}
+                        draggable={canDrag && !isSubUpdating}
+                        onDragStart={(e) => canDrag && !isSubUpdating ? handleDragStart(e, parent._id, st._id) : e.preventDefault()}
                         onClick={() => onSelectTask(parent, { targetSubtaskId: st._id })}
                         onMouseEnter={() => setHoveredFamilyKey(familyKey)}
                         onMouseLeave={() => setHoveredFamilyKey(null)}
                         title={`Subtask of ${parent.key}: ${parent.title}`}
                         className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-3.5 ${spotlightClass} ${
-                          canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                          isSubUpdating
+                            ? 'ring-2 ring-sky-500/80 ring-offset-1 pointer-events-none'
+                            : (canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')
                         } group flex flex-col gap-2 relative text-slate-800`}
                         style={{ borderLeftColor: LEVEL_THEMES.SUBTASK.accentColor }}
                       >
+                        {/* Loading Overlay when Stage is Updating */}
+                        {isSubUpdating && (
+                          <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] rounded-lg z-30 flex flex-col items-center justify-center gap-1.5 shadow-sm pointer-events-none transition-all animate-in fade-in duration-150">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-sky-50/95 border border-sky-200/90 rounded-full shadow-xs">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-600 shrink-0" />
+                              <span className="text-xs font-bold text-sky-800">Updating stage...</span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Drag Handle on hover & Focus Button */}
                         <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
                           {focusBtn}
@@ -2933,16 +3135,24 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {/* Subtask Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
                         <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span
-                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
-                              style={{
-                                backgroundColor: LEVEL_THEMES.SUBTASK.badgeBg,
-                                color: LEVEL_THEMES.SUBTASK.badgeText,
-                                borderColor: LEVEL_THEMES.SUBTASK.badgeBorder
-                              }}
-                            >
-                              {col.label}
-                            </span>
+                            {isSubUpdating ? (
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border bg-sky-50 text-sky-700 border-sky-300 shadow-2xs animate-pulse">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin text-sky-600 shrink-0" />
+                                <span>Updating...</span>
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                                style={{
+                                  backgroundColor: LEVEL_THEMES.SUBTASK.badgeBg,
+                                  color: LEVEL_THEMES.SUBTASK.badgeText,
+                                  borderColor: LEVEL_THEMES.SUBTASK.badgeBorder
+                                }}
+                              >
+                                {col.label}
+                              </span>
+                            )}
+
                             {st.dueDate && (
                               <span
                                 title={`Due Date: ${new Date(st.dueDate).toLocaleDateString()}`}
@@ -2988,21 +3198,34 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       const { parent, subtask: st, minitask: mini } = item;
                       const hasMicrotasks = Array.isArray(mini.microtasks) && mini.microtasks.length > 0;
                       const canDrag = canDragMinitask(parent, st, mini);
+                      const isMiniUpdating = Boolean(updatingStageItems[mini._id]);
 
                       return (
                       <div
                         key={`${parent._id}-${st._id}-${mini._id}`}
-                        draggable={canDrag}
-                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mini._id) : e.preventDefault()}
+                        draggable={canDrag && !isMiniUpdating}
+                        onDragStart={(e) => canDrag && !isMiniUpdating ? handleDragStart(e, parent._id, st._id, mini._id) : e.preventDefault()}
                         onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMinitaskId: mini._id })}
                         onMouseEnter={() => setHoveredFamilyKey(familyKey)}
                         onMouseLeave={() => setHoveredFamilyKey(null)}
                         title={`Mini-task of ${parent.key} > ${st.key ? st.key + ': ' : ''}${st.title}`}
                         className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-7 ${spotlightClass} ${
-                          canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                          isMiniUpdating
+                            ? 'ring-2 ring-amber-500/80 ring-offset-1 pointer-events-none'
+                            : (canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')
                         } group flex flex-col gap-2 relative text-slate-800`}
                         style={{ borderLeftColor: LEVEL_THEMES.MINITASK.accentColor }}
                       >
+                        {/* Loading Overlay when Stage is Updating */}
+                        {isMiniUpdating && (
+                          <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] rounded-lg z-30 flex flex-col items-center justify-center gap-1.5 shadow-sm pointer-events-none transition-all animate-in fade-in duration-150">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50/95 border border-amber-200/90 rounded-full shadow-xs">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600 shrink-0" />
+                              <span className="text-xs font-bold text-amber-800">Updating stage...</span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Drag Handle on hover & Focus Button */}
                         <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
                           {focusBtn}
@@ -3068,16 +3291,24 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {/* Mini-task Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
                         <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span
-                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
-                              style={{
-                                backgroundColor: LEVEL_THEMES.MINITASK.badgeBg,
-                                color: LEVEL_THEMES.MINITASK.badgeText,
-                                borderColor: LEVEL_THEMES.MINITASK.badgeBorder
-                              }}
-                            >
-                              {col.label}
-                            </span>
+                            {isMiniUpdating ? (
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border bg-amber-50 text-amber-800 border-amber-300 shadow-2xs animate-pulse">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin text-amber-600 shrink-0" />
+                                <span>Updating...</span>
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                                style={{
+                                  backgroundColor: LEVEL_THEMES.MINITASK.badgeBg,
+                                  color: LEVEL_THEMES.MINITASK.badgeText,
+                                  borderColor: LEVEL_THEMES.MINITASK.badgeBorder
+                                }}
+                              >
+                                {col.label}
+                              </span>
+                            )}
+
                             {mini.dueDate && (
                               <span
                                 title={`Due Date: ${new Date(mini.dueDate).toLocaleDateString()}`}
@@ -3122,21 +3353,36 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                     if (item.type === 'MICROTASK') {
                       const { parent, subtask: st, minitask: mini, microtask: mic } = item;
                       const canDrag = canDragMicrotask(parent, st, mini, mic);
+                      const isMicUpdating = Boolean(updatingStageItems[mic._id]);
 
                       return (
                       <div
                         key={`${parent._id}-${st._id}-${mini._id}-${mic._id}`}
-                        draggable={canDrag}
-                        onDragStart={(e) => canDrag ? handleDragStart(e, parent._id, st._id, mini._id, mic._id) : e.preventDefault()}
+                        draggable={canDrag && !isMicUpdating}
+                        onDragStart={(e) => (canDrag && !isMicUpdating) ? handleDragStart(e, parent._id, st._id, mini._id, mic._id) : e.preventDefault()}
                         onClick={() => onSelectTask(parent, { targetSubtaskId: st._id, targetMinitaskId: mini._id, targetMicrotaskId: mic._id })}
                         onMouseEnter={() => setHoveredFamilyKey(familyKey)}
                         onMouseLeave={() => setHoveredFamilyKey(null)}
                         title={`Micro-task of ${parent.key} > ${st.title} > ${mini.title}`}
                         className={`bg-white hover:bg-white p-3 rounded-lg border-l-4 border-t border-r border-b border-[#DFE1E6] hover:border-slate-400 shadow-2xs transition-all duration-150 ml-10 ${spotlightClass} ${
-                          canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                          isMicUpdating
+                            ? 'ring-2 ring-emerald-500/80 ring-offset-1 pointer-events-none'
+                            : canDrag
+                              ? 'cursor-grab active:cursor-grabbing'
+                              : 'cursor-pointer'
                         } group flex flex-col gap-2 relative text-slate-800`}
                         style={{ borderLeftColor: LEVEL_THEMES.MICROTASK.accentColor }}
                       >
+                        {/* Updating Overlay with Spinner */}
+                        {isMicUpdating && (
+                          <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] rounded-lg z-30 flex flex-col items-center justify-center gap-1.5 shadow-sm pointer-events-none transition-all animate-in fade-in duration-150">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50/95 border border-emerald-200/90 rounded-full shadow-xs">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600 shrink-0" />
+                              <span className="text-xs font-bold text-emerald-800">Updating stage...</span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Drag Handle on hover & Focus Button */}
                         <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
                           {focusBtn}
@@ -3178,16 +3424,23 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         {/* Microtask Bottom Row: Stage Pill, Due Date Badge, Assignee Avatar */}
                         <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span
-                              className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
-                              style={{
-                                backgroundColor: LEVEL_THEMES.MICROTASK.badgeBg,
-                                color: LEVEL_THEMES.MICROTASK.badgeText,
-                                borderColor: LEVEL_THEMES.MICROTASK.badgeBorder
-                              }}
-                            >
-                              {col.label}
-                            </span>
+                            {isMicUpdating ? (
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs animate-pulse">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin text-emerald-600 shrink-0" />
+                                <span>Updating...</span>
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[11px] font-bold px-2 py-0.5 rounded-md border"
+                                style={{
+                                  backgroundColor: LEVEL_THEMES.MICROTASK.badgeBg,
+                                  color: LEVEL_THEMES.MICROTASK.badgeText,
+                                  borderColor: LEVEL_THEMES.MICROTASK.badgeBorder
+                                }}
+                              >
+                                {col.label}
+                              </span>
+                            )}
                             {mic.dueDate && (
                               <span
                                 title={`Due Date: ${new Date(mic.dueDate).toLocaleDateString()}`}
@@ -3816,7 +4069,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   <option value="">Keep in project backlog</option>
                   {plannedSprints.map((s: any) => (
                     <option key={s._id} value={s._id}>
-                      {s.name} ({s.status})
+                      {s.name} ({formatSprintStatus(s.status)})
                     </option>
                   ))}
                 </select>
@@ -4060,6 +4313,19 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           defaultSprintName={currentSprint?.name || undefined}
           defaultTeam={selectedTeam?.name || (selectedTeamFilter && selectedTeamFilter !== 'ALL' ? selectedTeamFilter : undefined)}
         />,
+        document.body
+      )}
+      {/* Floating Status Indicator for In-Flight Stage Updates */}
+      {Object.keys(updatingStageItems).length > 0 && typeof document !== 'undefined' && createPortal(
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-2.5 bg-slate-900/95 text-white backdrop-blur-md rounded-full shadow-2xl border border-slate-700/80 text-xs font-semibold animate-in fade-in slide-in-from-bottom-3 duration-200 pointer-events-none">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+          <div className="flex items-center gap-1.5">
+            <span>Updating stage...</span>
+            <span className="text-[11px] font-normal text-slate-300">
+              ({Object.keys(updatingStageItems).length} in progress)
+            </span>
+          </div>
+        </div>,
         document.body
       )}
     </div>

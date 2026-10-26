@@ -14,6 +14,8 @@ const CacheService = require('../services/cacheService');
 const EmailService = require('../services/emailService');
 const { getStorageProvider } = require('../storage');
 const { emitToProject, emitToTask, emitGlobal } = require('../config/socket');
+const { generateMnemonicTaskCode, extractTaskMnemonic } = require('../utils/taskCodeGenerator');
+
 
 /**
  * Check task operation permissions based on Levels 1 - 5
@@ -523,7 +525,15 @@ const createTask = asyncHandler(async (req, res) => {
     teamCode = 'GEN';
   }
 
-  const key = `${projKey}-MT-${teamCode}-${taskNumber}`;
+  // Retrieve existing task keys to guarantee uniqueness of mnemonic code
+  const existingTeamTasks = await Task.find({ projectId }).select('key').lean();
+  const usedKeysAndCodes = new Set(existingTeamTasks.map((t) => t.key).filter(Boolean));
+
+  let taskCode = req.body.taskCode || '';
+  if (!taskCode) {
+    taskCode = generateMnemonicTaskCode(title, usedKeysAndCodes);
+  }
+  const key = req.body.key && req.body.key.trim() ? req.body.key.trim().toUpperCase() : `${projKey}-MT-${teamCode}-${taskCode}`;
 
   // Sanitize ObjectIds to prevent BSON casting errors
   const safeAssigneeId = assigneeId && mongoose.Types.ObjectId.isValid(assigneeId) ? assigneeId : null;
@@ -551,7 +561,7 @@ const createTask = asyncHandler(async (req, res) => {
     req.body.subtasks.forEach((st, idx) => {
       if (st && st.title && st.title.trim()) {
         const subtaskIndex = idx + 1;
-        const subtaskKey = `${projKey}-ST-${teamCode}-${taskNumber}-${subtaskIndex}`;
+        const subtaskKey = `${projKey}-ST-${teamCode}-${taskCode}-${subtaskIndex}`;
         const safeSubAssignee = st.assigneeId && mongoose.Types.ObjectId.isValid(st.assigneeId) ? st.assigneeId : null;
         const subStatus = st.status || status || firstStageId;
 
@@ -564,14 +574,15 @@ const createTask = asyncHandler(async (req, res) => {
           rawMinitasks.forEach((min, mIdx) => {
             if (min && min.title && min.title.trim()) {
               const minIndex = mIdx + 1;
-              const minKey = `${projKey}-MIN-${teamCode}-${taskNumber}-${subtaskIndex}-${minIndex}`;
+              const minKey = `${projKey}-MIN-${teamCode}-${taskCode}-${subtaskIndex}-${minIndex}`;
               const safeMinAssignee = min.assigneeId && mongoose.Types.ObjectId.isValid(min.assigneeId) ? min.assigneeId : null;
               const formattedMicrotasks = [];
               if (Array.isArray(min.microtasks) && min.microtasks.length > 0) {
                 min.microtasks.forEach((mic, micIdx) => {
                   if (mic && mic.title && mic.title.trim()) {
                     const micIndex = micIdx + 1;
-                    const micKey = `${projKey}-MIC-${teamCode}-${taskNumber}-${subtaskIndex}-${minIndex}-${micIndex}`;
+                    const micKey = `${projKey}-MIC-${teamCode}-${taskCode}-${subtaskIndex}-${minIndex}-${micIndex}`;
+
                     const safeMicAssignee = mic.assigneeId && mongoose.Types.ObjectId.isValid(mic.assigneeId) ? mic.assigneeId : null;
                     formattedMicrotasks.push({
                       key: micKey,
@@ -1112,7 +1123,7 @@ const addSubtask = asyncHandler(async (req, res) => {
 
   const projKey = project.key || 'TASK';
   const subtaskIndex = (task.subtasks.length || 0) + 1;
-  const mtId = task.taskNumber || (task.key ? task.key.match(/(\d+)$/)?.[1] : subtaskIndex) || subtaskIndex;
+  const mtCode = extractTaskMnemonic(task.key, task.taskNumber || 1);
 
   let teamCode = '';
   if (task.team) {
@@ -1126,7 +1137,7 @@ const addSubtask = asyncHandler(async (req, res) => {
       teamCode = task.team.split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 4);
     }
   } else {
-    const match = task.key.match(/^[^-]+-MT-([A-Z0-9]+)-\d+$/);
+    const match = task.key ? task.key.match(/^[^-]+-MT-([A-Z0-9]+)/) : null;
     if (match) {
       teamCode = match[1];
     }
@@ -1135,7 +1146,7 @@ const addSubtask = asyncHandler(async (req, res) => {
     teamCode = 'GEN';
   }
 
-  const subtaskKey = `${projKey}-ST-${teamCode}-${mtId}-${subtaskIndex}`;
+  const subtaskKey = `${projKey}-ST-${teamCode}-${mtCode}-${subtaskIndex}`;
 
   const stages = getWorkflowStagesForTask(project, task.team);
   const firstStageId = stages && stages.length > 0 ? stages[0].id : (status || task.status);

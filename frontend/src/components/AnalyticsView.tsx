@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatSprintStatus } from '../lib/formatters';
 import {
   TrendingUp,
   Flame,
@@ -334,7 +335,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ projectId }) => {
             >
               {sprints.map((s: any) => (
                 <option key={s._id} value={s._id}>
-                  {s.name} ({s.status})
+                  {s.name} ({s.status === 'ACTIVE' ? 'In Progress' : formatSprintStatus(s.status)})
                 </option>
               ))}
             </select>

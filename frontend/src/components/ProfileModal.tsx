@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api, { getBackendUrl } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatRole } from '../lib/formatters';
 import {
   X,
   User,
@@ -365,8 +366,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                   <ShieldCheck className="w-4 h-4 text-[#0F172A]" />
                   <span className="text-[#111827]/70">Global Role:</span>
                 </div>
-                <span className="text-[#0F172A] bg-white border border-[#0F172A]/15 px-2 py-0.5 rounded font-mono font-bold">
-                  {user?.role || 'MEMBER'}
+                <span className="text-[#0F172A] bg-white border border-[#0F172A]/15 px-2.5 py-0.5 rounded font-bold">
+                  {formatRole(user?.role)}
                 </span>
               </div>
             </div>

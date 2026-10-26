@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api, { getBackendUrl } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatSprintStatus } from '../lib/formatters';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { broadcastSyncEvent } from '../lib/crossTabSync';
 import {
@@ -2943,16 +2944,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                     e.preventDefault();
                                     const trimmed = draftMicroTitle.trim();
                                     if (!trimmed) return;
+                                    const effAssigneeId = draftMicroAssigneeId || st.assigneeId || assigneeId;
                                     const memberObj = assignableMembers.find((m: any) => {
                                       const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                                      return mId === draftMicroAssigneeId;
+                                      return mId === effAssigneeId;
                                     });
                                     const mName = memberObj ? (typeof memberObj.userId === 'object' ? memberObj.userId?.name : memberObj.name) || memberObj.email : undefined;
                                     const updatedSubtasks = [...draftSubtasks];
                                     const curMicros = updatedSubtasks[idx].microtasks || [];
                                     updatedSubtasks[idx] = {
                                       ...updatedSubtasks[idx],
-                                      microtasks: [...curMicros, { title: trimmed, assigneeId: draftMicroAssigneeId || undefined, assigneeName: mName }]
+                                      microtasks: [...curMicros, { title: trimmed, assigneeId: effAssigneeId || undefined, assigneeName: mName }]
                                     };
                                     setDraftSubtasks(updatedSubtasks);
                                     setDraftMicroTitle('');
@@ -2965,7 +2967,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                 onChange={(e) => setDraftMicroAssigneeId(e.target.value)}
                                 className="text-[10px] bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-gray-600 outline-none max-w-[110px] cursor-pointer truncate"
                               >
-                                <option value="">Assignee</option>
+                                <option value="">Assignee (Default: {st.assigneeName || 'Unassigned'})</option>
                                 {assignableMembers.map((m: any) => {
                                   const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
                                   const mName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
@@ -2982,16 +2984,17 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                 onClick={() => {
                                   const trimmed = draftMicroTitle.trim();
                                   if (!trimmed) return;
+                                  const effAssigneeId = draftMicroAssigneeId || st.assigneeId || assigneeId;
                                   const memberObj = assignableMembers.find((m: any) => {
                                     const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                                    return mId === draftMicroAssigneeId;
+                                    return mId === effAssigneeId;
                                   });
                                   const mName = memberObj ? (typeof memberObj.userId === 'object' ? memberObj.userId?.name : memberObj.name) || memberObj.email : undefined;
                                   const updatedSubtasks = [...draftSubtasks];
                                   const curMicros = updatedSubtasks[idx].microtasks || [];
                                   updatedSubtasks[idx] = {
                                     ...updatedSubtasks[idx],
-                                    microtasks: [...curMicros, { title: trimmed, assigneeId: draftMicroAssigneeId || undefined, assigneeName: mName }]
+                                    microtasks: [...curMicros, { title: trimmed, assigneeId: effAssigneeId || undefined, assigneeName: mName }]
                                   };
                                   setDraftSubtasks(updatedSubtasks);
                                   setDraftMicroTitle('');
@@ -3096,9 +3099,10 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                               setDueDate(newSubtaskDueDate);
                             }
                           } else {
+                            const effSubAssigneeId = newSubtaskAssigneeId || assigneeId;
                             const memberObj = assignableMembers.find((m: any) => {
                               const mId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                              return mId === newSubtaskAssigneeId;
+                              return mId === effSubAssigneeId;
                             });
                             const mName = memberObj ? (typeof memberObj.userId === 'object' ? memberObj.userId?.name : memberObj.name) || memberObj.email : undefined;
                             setDraftSubtasks([
@@ -3109,7 +3113,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                                 startDate: newSubtaskStartDate || undefined,
                                 dueDate: newSubtaskDueDate || undefined,
                                 status: newSubtaskStatus || undefined,
-                                assigneeId: newSubtaskAssigneeId || undefined,
+                                assigneeId: effSubAssigneeId || undefined,
                                 assigneeName: mName
                               }
                             ]);
@@ -3125,7 +3129,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                             setNewSubtaskDueDate('');
                             setNewSubtaskStatus('');
                             setNewSubtaskAssigneeId('');
-                            setAssigneeId('');
                             setIsAddSubtaskDetailsOpen(false);
                           }
                         }
@@ -3907,42 +3910,33 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                       </span>
                     )}
                   </div>
-                  {((isEditing && activeTask?.subtasks && activeTask.subtasks.length > 0) || (!isEditing && draftSubtasks.length > 0)) ? (
-                    <div className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-gray-500 font-medium flex items-center justify-between" title="When subtasks are present, assign members directly to individual subtasks or microtasks">
-                      <span className="text-xs">Unassigned (Managed by Subtasks)</span>
-                      <span className="text-[10px] bg-gray-200/70 text-gray-700 px-2 py-0.5 rounded-md font-semibold">
-                        Subtasks Exist
-                      </span>
-                    </div>
-                  ) : (
-                    <select
-                      value={assigneeId}
-                      disabled={!canAssignOthers}
-                      onChange={(e) => setAssigneeId(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-xl font-medium text-[#111827] outline-none cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Unassigned</option>
-                      {assignableMembers.length === 0 && selectedTeamObj ? (
-                        <option disabled value="">(No members assigned to this team)</option>
-                      ) : (
-                        assignableMembers.map((m: any) => {
-                          const memberId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
-                          const memberName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
-                          const memberEmail = (typeof m.userId === 'object' ? m.userId?.email : m.email) || '';
-                          const isLead = selectedTeamObj && (
-                            (typeof selectedTeamObj.leadId === 'object' ? selectedTeamObj.leadId?._id : selectedTeamObj.leadId)?.toString() === memberId?.toString()
-                          );
-                          const role = m.roleOverride || (isLead ? 'Team Lead' : (m.role || (typeof m.userId === 'object' && m.userId?.role) || m.jobTitle || ''));
-                          const roleLabel = role ? ` • [${role.replace(/_/g, ' ')}]` : '';
-                          return (
-                            <option key={memberId} value={memberId}>
-                              {memberName} {memberEmail && memberEmail !== memberName ? `(${memberEmail})` : ''}{roleLabel}
-                            </option>
-                          );
-                        })
-                      )}
-                    </select>
-                  )}
+                  <select
+                    value={assigneeId}
+                    disabled={!canAssignOthers}
+                    onChange={(e) => setAssigneeId(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-xl font-medium text-[#111827] outline-none cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
+                  >
+                    <option value="">Unassigned</option>
+                    {assignableMembers.length === 0 && selectedTeamObj ? (
+                      <option disabled value="">(No members assigned to this team)</option>
+                    ) : (
+                      assignableMembers.map((m: any) => {
+                        const memberId = (typeof m.userId === 'object' ? m.userId?._id : m.userId) || m._id;
+                        const memberName = (typeof m.userId === 'object' ? m.userId?.name : m.name) || (m.email ? m.email.split('@')[0] : 'Member');
+                        const memberEmail = (typeof m.userId === 'object' ? m.userId?.email : m.email) || '';
+                        const isLead = selectedTeamObj && (
+                          (typeof selectedTeamObj.leadId === 'object' ? selectedTeamObj.leadId?._id : selectedTeamObj.leadId)?.toString() === memberId?.toString()
+                        );
+                        const role = m.roleOverride || (isLead ? 'Team Lead' : (m.role || (typeof m.userId === 'object' && m.userId?.role) || m.jobTitle || ''));
+                        const roleLabel = role ? ` • [${role.replace(/_/g, ' ')}]` : '';
+                        return (
+                          <option key={memberId} value={memberId}>
+                            {memberName} {memberEmail && memberEmail !== memberName ? `(${memberEmail})` : ''}{roleLabel}
+                          </option>
+                        );
+                      })
+                    )}
+                  </select>
                 </div>
 
                 {/* Priority */}
@@ -4011,7 +4005,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                       const sprintTeamsStr = s.teams && s.teams.length > 0 ? s.teams.join(', ') : 'All Teams';
                       return (
                         <option key={s._id} value={s._id}>
-                          {s.name} • [{s.status}] — [{sprintTeamsStr}]
+                          {s.name} • [{formatSprintStatus(s.status)}] — [{sprintTeamsStr}]
                         </option>
                       );
                     })}

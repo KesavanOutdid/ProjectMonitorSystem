@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatRole, formatEnum } from '../lib/formatters';
 import {
   X,
   UserPlus,
@@ -426,7 +427,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
 
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                              {role}
+                              {formatRole(role)}
                             </span>
                             {link && (
                               <button
@@ -583,7 +584,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                             </div>
 
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 text-gray-700 border border-gray-200">
-                              {m.jobTitle || m.role || 'Member'}
+                              {m.jobTitle ? formatEnum(m.jobTitle) : formatRole(m.role)}
                             </span>
                           </div>
                         );

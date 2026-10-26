@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../store/authStore';
+import { formatRole } from '../lib/formatters';
 import {
   X,
   Search,
@@ -515,7 +516,7 @@ export const HelpCenterModal: React.FC<HelpCenterModalProps> = ({
     {
       title: 'Scenario 1: Starting a New Project & Sprint Planning',
       role: 'Project Manager (PM) / Product Owner',
-      requiredRole: 'PROJECT_MANAGER or ORG_ADMIN',
+      requiredRole: 'Project Manager or Org Admin',
       steps: [
         {
           num: 1,
@@ -542,7 +543,7 @@ export const HelpCenterModal: React.FC<HelpCenterModalProps> = ({
     {
       title: 'Scenario 2: Hardware & Software Execution in Daily Sprints',
       role: 'Hardware Engineer / Software Developer / QA',
-      requiredRole: 'DEVELOPER, QA, or MEMBER',
+      requiredRole: 'Developer, QA, or Member',
       steps: [
         {
           num: 1,
@@ -596,7 +597,7 @@ export const HelpCenterModal: React.FC<HelpCenterModalProps> = ({
     {
       title: 'Scenario 4: Managing Task Blockers with DAG Dependencies',
       role: 'Cross-functional Team Lead',
-      requiredRole: 'TEAM_LEAD or PM',
+      requiredRole: 'Team Lead or PM',
       steps: [
         {
           num: 1,
@@ -777,7 +778,7 @@ export const HelpCenterModal: React.FC<HelpCenterModalProps> = ({
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
               <div className="flex flex-col text-left">
                 <span className="text-[9px] uppercase tracking-wider text-slate-300 font-bold leading-none">Your Role</span>
-                <span className="text-[11px] font-extrabold text-white leading-tight">{userRole}</span>
+                <span className="text-[11px] font-extrabold text-white leading-tight">{formatRole(userRole)}</span>
               </div>
             </div>
 
@@ -961,7 +962,7 @@ export const HelpCenterModal: React.FC<HelpCenterModalProps> = ({
                   {/* Highlight current user role */}
                   <div className="bg-white/10 border border-white/20 px-3.5 py-2 rounded-xl text-xs shrink-0 self-start sm:self-center">
                     <span className="text-[10px] uppercase font-bold text-blue-300 block">Logged-in Account</span>
-                    <span className="font-extrabold text-white text-sm">{user?.name || 'Current User'} ({userRole})</span>
+                    <span className="font-extrabold text-white text-sm">{user?.name || 'Current User'} ({formatRole(userRole)})</span>
                   </div>
                 </div>
 

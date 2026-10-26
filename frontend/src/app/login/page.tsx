@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import api, { setStoredTokens } from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
+import { formatRole } from '../../lib/formatters';
 import {
   Lock,
   Mail,
@@ -22,12 +23,13 @@ import {
   EyeOff,
   ShieldCheck,
   KeyRound,
-  RotateCw
+  RotateCw,
+  LogOut
 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setUser, setCurrentWorkspace } = useAuthStore();
+  const { user, isAuthenticated, isLoading, fetchUser, logout, setUser, setCurrentWorkspace } = useAuthStore();
 
   const [isRegister, setIsRegister] = useState(false);
   const [accountType, setAccountType] = useState<'organization' | 'personal'>('organization');
@@ -39,6 +41,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
+
+  // Check existing session on mount
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
 
   // Direct Instant Registration (No OTP needed)
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -63,7 +70,7 @@ export default function LoginPage() {
       setStoredTokens(res.data.data.tokens.accessToken, res.data.data.tokens.refreshToken, true);
       setUser(res.data.data.user);
       setCurrentWorkspace(res.data.data.workspace);
-      router.push('/');
+      router.replace('/');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Registration failed. Please check your details and try again.');
     } finally {
@@ -85,7 +92,7 @@ export default function LoginPage() {
       if (res.data.data.workspace) {
         setCurrentWorkspace(res.data.data.workspace);
       }
-      router.push('/');
+      router.replace('/');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Authentication failed. Please check credentials.');
     } finally {
@@ -230,213 +237,279 @@ export default function LoginPage() {
             <div className="h-1.5 w-full bg-gradient-to-r from-[#22C55E] via-[#0F172A] to-[#22C55E]" />
 
             <div className="p-7 sm:p-9">
-              {/* Security Pill & Header */}
-              <div className="mb-6">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-[10px] font-bold mb-2.5">
-                  <ShieldCheck className="w-3 h-3 text-[#22C55E]" />
-                  <span>Outdid Workspace Portal</span>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-[#0F172A]">
-                  {isRegister ? 'Create your workspace' : 'Welcome back'}
-                </h2>
-                <p className="text-xs text-slate-500 mt-1 font-medium">
-                  {isRegister
-                    ? 'Set up your team workspace in under 60 seconds.'
-                    : 'Sign in to access your projects and live backlogs.'}
-                </p>
-              </div>
+              {isAuthenticated && user ? (
+                <div>
+                  <div className="text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 shadow-xs flex items-center justify-center mx-auto mb-3.5">
+                      <ShieldCheck className="w-7 h-7 text-[#22C55E]" />
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-[10px] font-bold mb-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+                      <span>Active Session Detected</span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-[#0F172A]">
+                      Already Signed In
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">
+                      You are currently authenticated in this workspace session.
+                    </p>
+                  </div>
 
-              {infoMessage && (
-                <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{infoMessage}</span>
-                </div>
-              )}
-
-              {error && (
-                <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold animate-shake">
-                  {error}
-                </div>
-              )}
-
-              {/* REGISTRATION OR LOGIN FORM */}
-              <form
-                onSubmit={isRegister ? handleRegisterSubmit : handleLoginSubmit}
-                className="flex flex-col gap-4"
-              >
-                  {isRegister && (
-                    <>
-                      {/* Account Type Segmented Tab */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                          Workspace Type *
-                        </label>
-                        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100/90 rounded-xl border border-slate-200">
-                          <button
-                            type="button"
-                            onClick={() => setAccountType('organization')}
-                            className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                              accountType === 'organization'
-                                ? 'bg-white text-[#0F172A] shadow-xs border border-slate-200/80'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                          >
-                            <Building className="w-3.5 h-3.5" />
-                            <span>Organization</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAccountType('personal')}
-                            className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                              accountType === 'personal'
-                                ? 'bg-white text-[#0F172A] shadow-xs border border-slate-200/80'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                          >
-                            <User className="w-3.5 h-3.5" />
-                            <span>Personal</span>
-                          </button>
-                        </div>
+                  {/* Profile Preview */}
+                  <div className="mt-5 p-3.5 bg-slate-50/90 border border-slate-200 rounded-2xl flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#0F172A] text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs">
+                      {user.avatar ? (
+                        <img src={user.avatar} alt={user.name} className="w-full h-full rounded-xl object-cover" />
+                      ) : (
+                        user.name?.[0]?.toUpperCase() || <User className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-bold text-slate-900 truncate">{user.name}</p>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          {formatRole(user.role)}
+                        </span>
                       </div>
+                      <p className="text-[11px] text-slate-500 truncate mt-0.5">{user.email}</p>
+                    </div>
+                  </div>
 
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                          Full Name *
-                        </label>
-                        <div className="relative">
-                          <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                          <input
-                            type="text"
-                            required
-                            placeholder="e.g. Sai Santhan"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
-                          />
-                        </div>
-                      </div>
+                  <p className="text-xs text-slate-600 text-center mt-4">
+                    Would you like to return to your workspace, or log out of this account?
+                  </p>
 
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                          {accountType === 'organization' ? 'Organization / Company Name *' : 'Workspace Name'}
-                        </label>
-                        <div className="relative">
-                          {accountType === 'organization' ? (
-                            <Building className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                          ) : (
-                            <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                          )}
-                          <input
-                            type="text"
-                            required={accountType === 'organization'}
-                            placeholder={accountType === 'organization' ? 'e.g. Outdid' : 'e.g. My Workspace'}
-                            value={workspaceName}
-                            onChange={(e) => setWorkspaceName(e.target.value)}
-                            className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
-                          />
-                        </div>
-                      </div>
-                    </>
+                  <div className="mt-6 flex flex-col gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => router.replace('/')}
+                      className="w-full bg-gradient-to-r from-[#0F172A] via-[#1E293B] to-[#0F172A] hover:opacity-95 active:scale-[0.99] text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>Continue to Workspace</span>
+                      <ArrowRight className="w-4 h-4 text-[#22C55E]" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => logout(false)}
+                      className="w-full py-2.5 px-4 bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 text-xs font-bold rounded-xl transition-all border border-slate-200 hover:border-rose-200 flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Log Out of this Account</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Security Pill & Header */}
+                  <div className="mb-6">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-[10px] font-bold mb-2.5">
+                      <ShieldCheck className="w-3 h-3 text-[#22C55E]" />
+                      <span>Outdid Workspace Portal</span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-[#0F172A]">
+                      {isRegister ? 'Create your workspace' : 'Welcome back'}
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">
+                      {isRegister
+                        ? 'Set up your team workspace in under 60 seconds.'
+                        : 'Sign in to access your projects and live backlogs.'}
+                    </p>
+                  </div>
+
+                  {infoMessage && (
+                    <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{infoMessage}</span>
+                    </div>
                   )}
 
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Work Email *
-                    </label>
-                    <div className="relative">
-                      <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="email"
-                        required
-                        placeholder="name@company.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
-                      />
+                  {error && (
+                    <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold animate-shake">
+                      {error}
                     </div>
-                  </div>
+                  )}
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                        Password *
-                      </label>
-                    </div>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full pl-9 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors p-1"
-                        tabIndex={-1}
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="mt-2 w-full bg-gradient-to-r from-[#0F172A] via-[#1E293B] to-[#0F172A] hover:opacity-95 active:scale-[0.99] text-white py-3.5 rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  {/* REGISTRATION OR LOGIN FORM */}
+                  <form
+                    onSubmit={isRegister ? handleRegisterSubmit : handleLoginSubmit}
+                    className="flex flex-col gap-4"
                   >
-                    <span>
-                      {loading
-                        ? isRegister
-                          ? 'Creating Workspace...'
-                          : 'Authenticating...'
-                        : isRegister
-                        ? 'Create Account & Launch'
-                        : 'Sign In to Workspace'}
-                    </span>
-                    <ArrowRight className="w-4 h-4 text-[#22C55E]" />
-                  </button>
-                </form>
+                      {isRegister && (
+                        <>
+                          {/* Account Type Segmented Tab */}
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                              Workspace Type *
+                            </label>
+                            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100/90 rounded-xl border border-slate-200">
+                              <button
+                                type="button"
+                                onClick={() => setAccountType('organization')}
+                                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  accountType === 'organization'
+                                    ? 'bg-white text-[#0F172A] shadow-xs border border-slate-200/80'
+                                    : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                              >
+                                <Building className="w-3.5 h-3.5" />
+                                <span>Organization</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAccountType('personal')}
+                                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  accountType === 'personal'
+                                    ? 'bg-white text-[#0F172A] shadow-xs border border-slate-200/80'
+                                    : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                              >
+                                <User className="w-3.5 h-3.5" />
+                                <span>Personal</span>
+                              </button>
+                            </div>
+                          </div>
 
-              {/* Bottom Toggle */}
-              <div className="mt-5 text-center text-xs text-slate-500">
-                {isRegister ? (
-                  <span>
-                    Already have an account?{' '}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsRegister(false);
-                        setError('');
-                        setInfoMessage('');
-                      }}
-                      className="text-[#0F172A] font-bold hover:underline cursor-pointer ml-1"
-                    >
-                      Sign in
-                    </button>
-                  </span>
-                ) : (
-                  <span>
-                    Need an account?{' '}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsRegister(true);
-                        setError('');
-                        setInfoMessage('');
-                        setEmail('');
-                        setPassword('');
-                      }}
-                      className="text-[#0F172A] font-bold hover:underline cursor-pointer ml-1"
-                    >
-                      Create one
-                    </button>
-                  </span>
-                )}
-              </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                              Full Name *
+                            </label>
+                            <div className="relative">
+                              <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                              <input
+                                type="text"
+                                required
+                                placeholder="e.g. Sai Santhan"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                              {accountType === 'organization' ? 'Organization / Company Name *' : 'Workspace Name'}
+                            </label>
+                            <div className="relative">
+                              {accountType === 'organization' ? (
+                                <Building className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                              ) : (
+                                <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                              )}
+                              <input
+                                type="text"
+                                required={accountType === 'organization'}
+                                placeholder={accountType === 'organization' ? 'e.g. Outdid' : 'e.g. My Workspace'}
+                                value={workspaceName}
+                                onChange={(e) => setWorkspaceName(e.target.value)}
+                                className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Work Email *
+                        </label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="email"
+                            required
+                            placeholder="name@company.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                            Password *
+                          </label>
+                        </div>
+                        <div className="relative">
+                          <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            placeholder="••••••••"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="w-full pl-9 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:bg-white focus:border-[#0F172A] focus:ring-4 focus:ring-[#0F172A]/5 text-slate-800 font-medium transition-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors p-1"
+                            tabIndex={-1}
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="mt-2 w-full bg-gradient-to-r from-[#0F172A] via-[#1E293B] to-[#0F172A] hover:opacity-95 active:scale-[0.99] text-white py-3.5 rounded-xl text-xs font-bold shadow-md shadow-slate-900/10 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <span>
+                          {loading
+                            ? isRegister
+                              ? 'Creating Workspace...'
+                              : 'Authenticating...'
+                            : isRegister
+                            ? 'Create Account & Launch'
+                            : 'Sign In to Workspace'}
+                        </span>
+                        <ArrowRight className="w-4 h-4 text-[#22C55E]" />
+                      </button>
+                    </form>
+
+                  {/* Bottom Toggle */}
+                  <div className="mt-5 text-center text-xs text-slate-500">
+                    {isRegister ? (
+                      <span>
+                        Already have an account?{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsRegister(false);
+                            setError('');
+                            setInfoMessage('');
+                          }}
+                          className="text-[#0F172A] font-bold hover:underline cursor-pointer ml-1"
+                        >
+                          Sign in
+                        </button>
+                      </span>
+                    ) : (
+                      <span>
+                        Need an account?{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsRegister(true);
+                            setError('');
+                            setInfoMessage('');
+                            setEmail('');
+                            setPassword('');
+                          }}
+                          className="text-[#0F172A] font-bold hover:underline cursor-pointer ml-1"
+                        >
+                          Create one
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

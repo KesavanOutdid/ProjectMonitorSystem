@@ -343,9 +343,42 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, 
             {/* Organization Teams (Workspace Dynamic) */}
             {orgTeams.length > 0 && (
               <div>
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-1.5">
-                  Organization Teams (Click to Add):
-                </span>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
+                    Organization Teams (Click to Add):
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allTeamsPayload = orgTeams.map((ot: any) => {
+                        const orgMemberIds = Array.isArray(ot.members)
+                          ? ot.members.map((m: any) => {
+                              if (typeof m === 'object' && m?._id) return m._id.toString();
+                              if (typeof m === 'object' && m?.userId) return (m.userId._id || m.userId).toString();
+                              return m.toString();
+                            })
+                          : [];
+                        if (ot.leadId) {
+                          const leadIdStr = (typeof ot.leadId === 'object' && ot.leadId?._id) ? ot.leadId._id.toString() : ot.leadId?.toString();
+                          if (leadIdStr && !orgMemberIds.includes(leadIdStr)) {
+                            orgMemberIds.unshift(leadIdStr);
+                          }
+                        }
+                        return {
+                          id: ot._id,
+                          name: ot.name,
+                          key: ot.key || ot.name.slice(0, 3).toUpperCase(),
+                          color: ot.color || '#3B82F6',
+                          memberIds: orgMemberIds
+                        };
+                      });
+                      setTeams(allTeamsPayload);
+                    }}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 font-bold cursor-pointer hover:underline"
+                  >
+                    + Select All ({orgTeams.length})
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-1.5">
                   {orgTeams.map((ot: any) => {
                     const isIncluded = teams.some(

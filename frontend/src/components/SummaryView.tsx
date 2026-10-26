@@ -6,6 +6,7 @@ import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import { SummaryViewSkeleton } from './Skeletons';
 import { TimelineTree, TimeframeOption } from './TimelineTree';
+import { formatSprintStatus } from '../lib/formatters';
 import {
   CheckCircle2,
   Edit3,
@@ -503,7 +504,10 @@ export const SummaryView: React.FC<SummaryViewProps> = ({
     return {
       sprintName: (selectedSprintId && selectedSprintId !== 'ALL')
         ? (activeSp?.name || 'Selected Sprint')
-        : (activeSp ? `${activeSp.name} (ACTIVE)` : 'All Sprints Scope'),
+        : (activeSp ? activeSp.name : 'All Sprints Scope'),
+      statusLabel: (selectedSprintId && selectedSprintId !== 'ALL')
+        ? (activeSp?.status === 'ACTIVE' ? 'In Progress' : activeSp?.status ? formatSprintStatus(activeSp.status) : '')
+        : (activeSp ? 'In Progress' : ''),
       totalTasks: total,
       completedTasks: completedTasks.length,
       remainingTasks: Math.max(0, total - completedTasks.length),
@@ -837,7 +841,7 @@ export const SummaryView: React.FC<SummaryViewProps> = ({
                 <option value="ALL">All Sprints & Backlog</option>
                 {sprints.map((s: any) => (
                   <option key={s._id} value={s._id}>
-                    {s.name} ({s.status})
+                    {s.name} ({s.status === 'ACTIVE' ? 'In Progress' : formatSprintStatus(s.status)})
                   </option>
                 ))}
               </select>
@@ -953,12 +957,17 @@ export const SummaryView: React.FC<SummaryViewProps> = ({
           <div>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 flex-wrap">
                   <Flame className="w-4 h-4 text-amber-500" />
                   <span>Sprint Burndown</span>
-                  <span className="text-xs text-slate-400 font-normal">
-                    ({dynamicBurndown.sprintName})
+                  <span className="text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                    {dynamicBurndown.sprintName}
                   </span>
+                  {dynamicBurndown.statusLabel && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      {dynamicBurndown.statusLabel}
+                    </span>
+                  )}
                 </h3>
                 <p className="text-[11px] text-slate-500">
                   Ideal guideline vs. actual tasks remaining

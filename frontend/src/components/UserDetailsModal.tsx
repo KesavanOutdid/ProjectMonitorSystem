@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { formatRole } from '../lib/formatters';
 import {
   X,
   Loader2,
@@ -147,7 +148,7 @@ export const UserDetailsModal: React.FC<UserDetailsModalProps> = ({
                 )}
                 {details?.user?.role && (
                   <span className="text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-full">
-                    {details.user.role.replace('_', ' ')}
+                    {formatRole(details.user.role)}
                   </span>
                 )}
               </div>
@@ -400,7 +401,7 @@ export const UserDetailsModal: React.FC<UserDetailsModalProps> = ({
                                 </span>
                               ) : (
                                 <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2 py-0.5 rounded-md">
-                                  {p.role || 'Member'}
+                                  {formatRole(p.role)}
                                 </span>
                               )}
                             </div>

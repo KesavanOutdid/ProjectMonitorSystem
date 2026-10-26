@@ -11,6 +11,8 @@ const Activity = require('../models/Activity');
 const asyncHandler = require('../middlewares/asyncHandler');
 const CacheService = require('../services/cacheService');
 const { emitToProject } = require('../config/socket');
+const { generateMnemonicTaskCode, extractTaskMnemonic } = require('../utils/taskCodeGenerator');
+
 
 const normalizeHeader = (str) => {
   if (!str) return '';
@@ -90,6 +92,15 @@ const parseCleanDate = (val) => {
   }
   const parsed = new Date(val);
   return isNaN(parsed.getTime()) ? null : parsed;
+};
+
+/**
+ * Format Date safely to YYYY-MM-DD string
+ */
+const formatDateStr = (val) => {
+  if (!val) return '';
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
 };
 
 /**
@@ -304,11 +315,50 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
   const isTeamLeadUser = user.role === 'TEAM_LEAD' || leadTeamNames.size > 0;
   const forcedLeadTeamName = primaryLeadTeam ? primaryLeadTeam.name : (options.defaultTeam || null);
 
-  // 2. Fetch workspace and project users for flexible matching (by Email AND Name)
+  // 2. Fetch all workspace and project users for flexible matching (by Email AND Name)
+  const userIds = new Set();
+  if (project.leadId) userIds.add((project.leadId._id || project.leadId).toString());
+  if (Array.isArray(project.members)) {
+    project.members.forEach((m) => {
+      const uId = (m.userId?._id || m.userId || m)?.toString();
+      if (uId) userIds.add(uId);
+    });
+  }
+  if (Array.isArray(project.teams)) {
+    project.teams.forEach((t) => {
+      if (t.leadId) userIds.add((t.leadId._id || t.leadId).toString());
+      if (Array.isArray(t.members)) {
+        t.members.forEach((m) => {
+          const uId = (m._id || m.userId?._id || m.userId || m)?.toString();
+          if (uId) userIds.add(uId);
+        });
+      }
+    });
+  }
+  if (Array.isArray(workspaceTeams)) {
+    workspaceTeams.forEach((wt) => {
+      if (wt.leadId) userIds.add((wt.leadId._id || wt.leadId).toString());
+      if (Array.isArray(wt.members)) {
+        wt.members.forEach((m) => {
+          const uId = (m._id || m.userId?._id || m.userId || m)?.toString();
+          if (uId) userIds.add(uId);
+        });
+      }
+    });
+  }
+  const workspace = await Workspace.findById(project.workspaceId).lean();
+  if (workspace?.ownerId) userIds.add(workspace.ownerId.toString());
+  if (Array.isArray(workspace?.members)) {
+    workspace.members.forEach((m) => {
+      const uId = (m.userId?._id || m.userId || m)?.toString();
+      if (uId) userIds.add(uId);
+    });
+  }
+
   const users = await User.find({
     $or: [
-      { workspaceId: project.workspaceId },
-      { _id: { $in: project.members?.map((m) => m.userId || m) || [] } }
+      { _id: { $in: Array.from(userIds) } },
+      { currentWorkspace: project.workspaceId }
     ]
   }).select('_id name email avatar jobTitle');
 
@@ -345,8 +395,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
   const resolveAssignee = (rawAssignee) => {
     if (!rawAssignee) return null;
     let clean = String(rawAssignee).trim();
+    if (!clean) return null;
     
-    // Check if format is "First Last <email@domain.com>"
+    // 1. Check if format is "First Last <email@domain.com>"
     const emailBracketMatch = clean.match(/<([^>]+)>/);
     if (emailBracketMatch) {
       const emailInside = emailBracketMatch[1].toLowerCase().trim();
@@ -356,28 +407,39 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       clean = clean.replace(/<[^>]+>/, '').trim();
     }
 
+    // 2. Direct inline email detection
+    const emailInlineMatch = clean.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailInlineMatch) {
+      const foundEmail = emailInlineMatch[1].toLowerCase().trim();
+      if (userEmailMap.has(foundEmail)) {
+        return userEmailMap.get(foundEmail);
+      }
+    }
+
     const cleanLower = clean.toLowerCase();
 
-    // Direct email match
+    // 3. Direct email match
     if (cleanLower.includes('@') && userEmailMap.has(cleanLower)) {
       return userEmailMap.get(cleanLower);
     }
-    // Direct name match
+    // 4. Direct name match
     if (userNameMap.has(cleanLower)) {
       return userNameMap.get(cleanLower);
     }
-    // Name map without special characters
+    // 5. Name map without special characters
     const alphanumericLower = cleanLower.replace(/[^a-z0-9]/g, '');
-    for (const [nameKey, u] of userNameMap.entries()) {
-      const uAlphanumeric = nameKey.replace(/[^a-z0-9]/g, '');
-      if (uAlphanumeric === alphanumericLower) {
-        return u;
+    if (alphanumericLower) {
+      for (const [nameKey, u] of userNameMap.entries()) {
+        const uAlphanumeric = nameKey.replace(/[^a-z0-9]/g, '');
+        if (uAlphanumeric === alphanumericLower) {
+          return u;
+        }
       }
     }
-    // Partial substring match
-    for (const [nameKey, u] of userNameMap.entries()) {
-      if (nameKey.length >= 3 && cleanLower.length >= 3) {
-        if (nameKey.includes(cleanLower) || cleanLower.includes(nameKey)) {
+    // 6. Partial substring match
+    if (cleanLower.length >= 3) {
+      for (const [nameKey, u] of userNameMap.entries()) {
+        if (nameKey.length >= 3 && (nameKey.includes(cleanLower) || cleanLower.includes(nameKey))) {
           return u;
         }
       }
@@ -403,19 +465,14 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     }
   });
 
+  const usedMnemonicCodes = new Set(existingTasks.map((t) => t.key).filter(Boolean));
+
   // 4. Fetch existing project sprints
+
+
   const existingSprints = await Sprint.find({ projectId }).sort({ createdAt: 1 });
   let baseDate = options.defaultStartDate ? new Date(options.defaultStartDate) : new Date();
   if (isNaN(baseDate.getTime())) baseDate = new Date();
-
-  const latestExistingSprint = existingSprints[existingSprints.length - 1];
-  if (latestExistingSprint && latestExistingSprint.endDate) {
-    const nextDay = new Date(latestExistingSprint.endDate);
-    nextDay.setDate(nextDay.getDate() + 1);
-    if (nextDay > baseDate) {
-      baseDate = nextDay;
-    }
-  }
 
   // 5. Pass 1: Discover Sprints / Phases and schedule dates
   const sprintGroups = new Map();
@@ -552,6 +609,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
   const addedSubtaskKeysToDisplay = new Set();
   const addedMinitaskKeysToDisplay = new Set();
   const warnings = [];
+  const unknownAssigneesMap = new Map(); // rawAssignee -> array of row numbers for clean grouping
   let newTasksCount = 0;
   let updateTasksCount = 0;
   let subtasksCount = 0;
@@ -831,7 +889,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     }
 
     // Assignee Resolution
-    const rawAssignee = getRowValue(row, [
+    let rawAssignee = getRowValue(row, [
       'Assignee',
       'Assignee Name',
       'Assignee Email',
@@ -843,18 +901,28 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       'Person'
     ]).toString().trim();
 
-    const matchedAssignee = resolveAssignee(rawAssignee);
-    if (rawAssignee && !matchedAssignee) {
-      warnings.push(`Row ${index + 2}: Assignee "${rawAssignee}" not found in project. Task will be created as Unassigned (assignee can be added later).`);
+    // If assignee column contains placeholder text, treat as unassigned
+    if (['unassigned', 'none', 'n/a', '-', 'tbd', 'null', 'undefined'].includes(rawAssignee.toLowerCase())) {
+      rawAssignee = '';
     }
 
-    // Team membership check
+    const matchedAssignee = resolveAssignee(rawAssignee);
+    if (rawAssignee && !matchedAssignee) {
+      if (!unknownAssigneesMap.has(rawAssignee)) {
+        unknownAssigneesMap.set(rawAssignee, []);
+      }
+      unknownAssigneesMap.get(rawAssignee).push(index + 2);
+    }
+
+    // Team membership check: strictly check if the user is assigned to this team
     let isTeamMember = null;
-    if (matchedAssignee && team) {
+    if (matchedAssignee && team && !['general', 'all', ''].includes(team.toLowerCase().trim())) {
       const cleanTeam = team.toLowerCase().trim();
       const membersSet = teamMembersMap.get(cleanTeam);
       if (membersSet) {
         isTeamMember = membersSet.has(matchedAssignee._id.toString());
+      } else {
+        isTeamMember = false;
       }
     }
 
@@ -870,27 +938,43 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     }
 
     // ─── Timeline Dates & Duration Calculation ───────────────────────────────
-    // Does not strictly require start and end date; defaults computed from duration!
-    const rawDuration = parseInt(getRowValue(row, ['Duration (Days)', 'Duration', 'Days', 'Effort Days', 'Duration Days'], 0), 10);
-    const defaultDuration = isRowMicrotask ? 1 : (isRowSubtask ? 3 : 7);
-    const durationDays = rawDuration > 0 ? rawDuration : defaultDuration;
+    const durationInput = getRowValue(row, ['Duration (Days)', 'Duration', 'Days', 'Effort Days', 'Duration Days'], '');
+    const rawDuration = parseInt(durationInput, 10);
+    const hasExplicitDuration = !isNaN(rawDuration) && rawDuration > 0;
 
     let taskStartDate = parseCleanDate(getRowValue(row, ['Start Date', 'Task Start Date', 'Start', 'Planned Start Date', 'Planned Start']));
-    let taskDueDate = parseCleanDate(getRowValue(row, ['End Date', 'Due Date', 'Task Due Date', 'Deadline', 'Finish', 'Planned Finish Date', 'Planned End']));
+    let taskDueDate = parseCleanDate(getRowValue(row, ['End Date', 'Due Date', 'Task Due Date', 'Deadline', 'Finish', 'Planned Finish Date', 'Planned End', 'Stop Date', 'Stop', 'Task Stop Date']));
 
-    if (!taskStartDate) {
-      taskStartDate = sprintMeta ? new Date(sprintMeta.startDate) : new Date(baseDate);
+    // "stater date also if they givedn only make it blank only; also if duration is there make start date also blank only":
+    // Only set taskStartDate if explicitly provided in the spreadsheet row. Otherwise leave as null (blank).
+    let calculatedDuration = null;
+
+    if (taskDueDate) {
+      if (taskStartDate && taskDueDate < taskStartDate) {
+        taskDueDate = new Date(taskStartDate.getFullYear(), taskStartDate.getMonth(), taskStartDate.getDate(), 18, 0, 0);
+      }
+      if (hasExplicitDuration) {
+        calculatedDuration = rawDuration;
+      } else if (taskStartDate) {
+        const diffMs = taskDueDate.getTime() - taskStartDate.getTime();
+        const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
+        calculatedDuration = Math.max(1, diffDays >= 0 ? diffDays + 1 : 1);
+      } else {
+        calculatedDuration = null;
+      }
+    } else if (hasExplicitDuration) {
+      calculatedDuration = rawDuration;
+      if (taskStartDate) {
+        // If start date was explicitly given along with duration, compute due date
+        taskDueDate = new Date(taskStartDate.getFullYear(), taskStartDate.getMonth(), taskStartDate.getDate() + (rawDuration - 1), 18, 0, 0);
+      } else {
+        // If start date was not given, leave due date blank as well
+        taskDueDate = null;
+      }
+    } else {
+      taskDueDate = null;
+      calculatedDuration = null;
     }
-
-    if (!taskDueDate) {
-      taskDueDate = new Date(taskStartDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
-    }
-
-    if (taskDueDate < taskStartDate) {
-      taskDueDate = new Date(taskStartDate.getTime() + 1 * 24 * 60 * 60 * 1000);
-    }
-
-    const calculatedDuration = Math.max(1, Math.round((taskDueDate.getTime() - taskStartDate.getTime()) / (24 * 60 * 60 * 1000)));
 
     // Predecessors / Dependencies
     const dependenciesRaw = getRowValue(row, [
@@ -944,8 +1028,11 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           newTasksCount++;
           taskNumber = runningCounter++;
           const mainTeamCode = resolveTeamCode(team || options.defaultTeam, project.teams, workspaceTeams) || 'GEN';
-          key = `${projKey}-MT-${mainTeamCode}-${taskNumber}`;
+          const taskMnemonic = generateMnemonicTaskCode(targetMainTitle, usedMnemonicCodes);
+          key = `${projKey}-MT-${mainTeamCode}-${taskMnemonic}`;
+          usedMnemonicCodes.add(key);
         }
+
 
         const effectiveSprint = level2Val || sprintName || (existingMain ? existingMain.sprint : null) || options.defaultSprintName || 'Backlog';
 
@@ -967,9 +1054,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           assigneeEmail: existingMain ? (existingMain.assigneeId?.email || '') : (matchedAssignee ? matchedAssignee.email : ''),
           startDate: taskStartDate,
           dueDate: taskDueDate,
-          durationDays: 7,
-          dependencies: '',
-          isMilestone: false,
+          durationDays: calculatedDuration || null,
+          dependencies: dependenciesRaw || '',
+          isMilestone: isMilestone || false,
           phase: effectiveSprint,
           sprintName: effectiveSprint,
           sprintIndex: effectiveSprint,
@@ -1020,8 +1107,8 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       if (!parentSubtask && parentMain && targetSubTitle) {
         const cleanTeamCode = resolveTeamCode(team || parentMain.team, project.teams, workspaceTeams) || 'GEN';
         const subIdx = (parentMain.subtasks?.length || 0) + 1;
-        const mtId = parentMain.taskNumber || 1;
-        const subKey = `${projKey}-ST-${cleanTeamCode}-${mtId}-${subIdx}`;
+        const mtCode = extractTaskMnemonic(parentMain.key, parentMain.taskNumber || 1);
+        const subKey = `${projKey}-ST-${cleanTeamCode}-${mtCode}-${subIdx}`;
 
         parentSubtask = {
           key: subKey,
@@ -1031,6 +1118,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           isCompleted: false,
           startDate: taskStartDate,
           dueDate: taskDueDate,
+          durationDays: calculatedDuration || null,
           assigneeId: null,
           assigneeName: null,
           assigneeEmail: null,
@@ -1059,10 +1147,10 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         // If parentMinitask still null, auto-create it under parentSubtask
         if (!parentMinitask) {
           const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
-          const mtId = parentMain?.taskNumber || 1;
+          const mtCode = extractTaskMnemonic(parentMain?.key, parentMain?.taskNumber || 1);
           const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
           const miniIdx = (parentSubtask.minitasks?.length || 0) + 1;
-          const miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtId}-${subIdx}-${miniIdx}`;
+          const miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtCode}-${subIdx}-${miniIdx}`;
 
           parentMinitask = {
             _id: new mongoose.Types.ObjectId(),
@@ -1073,6 +1161,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             isCompleted: false,
             startDate: taskStartDate,
             dueDate: taskDueDate,
+            durationDays: calculatedDuration || null,
             assigneeId: null,
             assigneeName: null,
             assigneeEmail: null,
@@ -1089,23 +1178,16 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         if (!parentMinitask.microtasks) parentMinitask.microtasks = [];
         microtasksCount++;
 
-        // Clear parent level assignees when microtasks exist
-        parentMinitask.assigneeId = null;
-        parentMinitask.assigneeName = null;
-        parentMinitask.assigneeEmail = null;
-        parentSubtask.assigneeId = null;
-        parentSubtask.assigneeName = null;
-        parentSubtask.assigneeEmail = null;
-
         const micIndex = parentMinitask.microtasks.length + 1;
-        const mtId = parentMain?.taskNumber || 1;
+        const mtCode = extractTaskMnemonic(parentMain?.key, parentMain?.taskNumber || 1);
         const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)(?:-\d+)?$/)?.[1] || 1) : 1;
         const miniIdx = parentMinitask.key ? (parentMinitask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
         const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
         let micKey = explicitKey;
-        if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+-\d+$/.test(micKey)) {
-          micKey = `${projKey}-MIC-${cleanTeamCode}-${mtId}-${subIdx}-${miniIdx}-${micIndex}`;
+        if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-[A-Z0-9]+-\d+-\d+-\d+$/.test(micKey)) {
+          micKey = `${projKey}-MIC-${cleanTeamCode}-${mtCode}-${subIdx}-${miniIdx}-${micIndex}`;
         }
+
 
         const cleanMicTitle = title.toLowerCase().trim();
         const existingMicIndex = parentMinitask.microtasks.findIndex(
@@ -1124,6 +1206,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           existingMic.isCompleted = (status === 'DONE');
           existingMic.startDate = taskStartDate;
           existingMic.dueDate = taskDueDate;
+          existingMic.durationDays = calculatedDuration || null;
           if (matchedAssignee) {
             existingMic.assigneeId = matchedAssignee._id;
             existingMic.assigneeName = matchedAssignee.name;
@@ -1140,6 +1223,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             isCompleted: (status === 'DONE'),
             startDate: taskStartDate,
             dueDate: taskDueDate,
+            durationDays: calculatedDuration || null,
             assigneeId: matchedAssignee ? matchedAssignee._id : null,
             assigneeName: matchedAssignee ? matchedAssignee.name : (rawAssignee || ''),
             assigneeEmail: matchedAssignee ? matchedAssignee.email : '',
@@ -1212,8 +1296,11 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           newTasksCount++;
           taskNumber = runningCounter++;
           const mainTeamCode = resolveTeamCode(team || options.defaultTeam, project.teams, workspaceTeams) || 'GEN';
-          key = `${projKey}-MT-${mainTeamCode}-${taskNumber}`;
+          const taskMnemonic = generateMnemonicTaskCode(targetMainTitle, usedMnemonicCodes);
+          key = `${projKey}-MT-${mainTeamCode}-${taskMnemonic}`;
+          usedMnemonicCodes.add(key);
         }
+
 
         const effectiveSprint = level2Val || sprintName || (existingMain ? existingMain.sprint : null) || options.defaultSprintName || 'Backlog';
 
@@ -1235,9 +1322,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           assigneeEmail: existingMain ? (existingMain.assigneeId?.email || '') : (matchedAssignee ? matchedAssignee.email : ''),
           startDate: taskStartDate,
           dueDate: taskDueDate,
-          durationDays: 7,
-          dependencies: '',
-          isMilestone: false,
+          durationDays: calculatedDuration || null,
+          dependencies: dependenciesRaw || '',
+          isMilestone: isMilestone || false,
           phase: effectiveSprint,
           sprintName: effectiveSprint,
           sprintIndex: effectiveSprint,
@@ -1288,8 +1375,8 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       if (!parentSubtask && parentMain && targetSubTitle) {
         const cleanTeamCode = resolveTeamCode(team || parentMain.team, project.teams, workspaceTeams) || 'GEN';
         const subIdx = (parentMain.subtasks?.length || 0) + 1;
-        const mtId = parentMain.taskNumber || 1;
-        const subKey = `${projKey}-ST-${cleanTeamCode}-${mtId}-${subIdx}`;
+        const mtCode = extractTaskMnemonic(parentMain.key, parentMain.taskNumber || 1);
+        const subKey = `${projKey}-ST-${cleanTeamCode}-${mtCode}-${subIdx}`;
 
         parentSubtask = {
           _id: new mongoose.Types.ObjectId(),
@@ -1327,14 +1414,14 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             title: parentSubtask.title,
             description: parentSubtask.description || '',
             team: parentSubtask.team || parentMain?.team || 'General',
-            assigneeName: parentSubtask.assigneeName || 'Unassigned',
+            assigneeName: (parentSubtask.assigneeName && !['unassigned', 'none', 'n/a'].includes(parentSubtask.assigneeName.toLowerCase().trim())) ? parentSubtask.assigneeName : null,
             assigneeEmail: parentSubtask.assigneeEmail || null,
-            isTeamMember: false,
+            isTeamMember: parentSubtask.isTeamMember !== undefined ? parentSubtask.isTeamMember : null,
             phase: parentMain?.phase || sprintName,
             sprintName: parentMain?.sprintName || sprintName,
             startDate: parentSubtask.startDate || taskStartDate,
             dueDate: parentSubtask.dueDate || taskDueDate,
-            durationDays: 7,
+            durationDays: parentSubtask.durationDays || calculatedDuration || null,
             priority: 'MEDIUM',
             status: parentSubtask.status || 'TODO'
           });
@@ -1343,19 +1430,15 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         if (!parentSubtask.minitasks) parentSubtask.minitasks = [];
         minitasksCount++;
 
-        // Clear subtask assignee when mini-tasks exist
-        parentSubtask.assigneeId = null;
-        parentSubtask.assigneeName = null;
-        parentSubtask.assigneeEmail = null;
-
         const miniIndex = parentSubtask.minitasks.length + 1;
-        const mtId = parentMain?.taskNumber || 1;
+        const mtCode = extractTaskMnemonic(parentMain?.key, parentMain?.taskNumber || 1);
         const subIdx = parentSubtask.key ? (parentSubtask.key.match(/-(\d+)$/)?.[1] || 1) : 1;
         const cleanTeamCode = resolveTeamCode(team || parentMain?.team, project.teams, workspaceTeams) || 'GEN';
         let miniKey = explicitKey;
-        if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-\d+-\d+-\d+$/.test(miniKey)) {
-          miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtId}-${subIdx}-${miniIndex}`;
+        if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-[A-Z0-9]+-\d+-\d+$/.test(miniKey)) {
+          miniKey = `${projKey}-MIN-${cleanTeamCode}-${mtCode}-${subIdx}-${miniIndex}`;
         }
+
 
         const cleanMiniTitle = title.toLowerCase().trim();
         const existingMiniIndex = parentSubtask.minitasks.findIndex(
@@ -1374,6 +1457,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           existingMini.isCompleted = (status === 'DONE');
           existingMini.startDate = taskStartDate;
           existingMini.dueDate = taskDueDate;
+          existingMini.durationDays = calculatedDuration || null;
           if (matchedAssignee) {
             existingMini.assigneeId = matchedAssignee._id;
             existingMini.assigneeName = matchedAssignee.name;
@@ -1390,6 +1474,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             isCompleted: (status === 'DONE'),
             startDate: taskStartDate,
             dueDate: taskDueDate,
+            durationDays: calculatedDuration || null,
             assigneeId: matchedAssignee ? matchedAssignee._id : null,
             assigneeName: matchedAssignee ? matchedAssignee.name : (rawAssignee || ''),
             assigneeEmail: matchedAssignee ? matchedAssignee.email : '',
@@ -1469,8 +1554,11 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           newTasksCount++;
           taskNumber = runningCounter++;
           const mainTeamCode = resolveTeamCode(team || options.defaultTeam, project.teams, workspaceTeams) || 'GEN';
-          key = `${projKey}-MT-${mainTeamCode}-${taskNumber}`;
+          const taskMnemonic = generateMnemonicTaskCode(targetMainTitle, usedMnemonicCodes);
+          key = `${projKey}-MT-${mainTeamCode}-${taskMnemonic}`;
+          usedMnemonicCodes.add(key);
         }
+
 
         const effectiveSprint = level2Val || sprintName || (existingMain ? existingMain.sprint : null) || options.defaultSprintName || 'Backlog';
 
@@ -1492,9 +1580,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           assigneeEmail: existingMain ? (existingMain.assigneeId?.email || '') : (matchedAssignee ? matchedAssignee.email : ''),
           startDate: taskStartDate,
           dueDate: taskDueDate,
-          durationDays: 7,
-          dependencies: '',
-          isMilestone: false,
+          durationDays: calculatedDuration || null,
+          dependencies: dependenciesRaw || '',
+          isMilestone: isMilestone || false,
           phase: effectiveSprint,
           sprintName: effectiveSprint,
           sprintIndex: effectiveSprint,
@@ -1549,9 +1637,9 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             isTeamMember: null,
             startDate: existingDoc.startDate,
             dueDate: existingDoc.dueDate,
-            durationDays: 7,
-            dependencies: '',
-            isMilestone: false,
+            durationDays: existingDoc.customFields?.durationDays || null,
+            dependencies: existingDoc.customFields?.dependenciesText || '',
+            isMilestone: existingDoc.customFields?.isMilestone || false,
             phase: existingDoc.epic || sprintName,
             sprintName: existingDoc.sprint || sprintName,
             sprintIndex: existingDoc.sprint || null,
@@ -1578,10 +1666,11 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
         if (isSubValidTeam) {
           subtasksCount++;
           const subIndex = parentTask.subtasks.length + 1;
-          const mtId = parentTask.taskNumber || (parentTask.key ? parentTask.key.match(/(\d+)$/)?.[1] : subIndex) || subIndex;
+          const mtCode = extractTaskMnemonic(parentTask.key, parentTask.taskNumber || subIndex);
           let subTeamCode = teamCode || 'GEN';
-          subKey = `${projKey}-ST-${subTeamCode}-${mtId}-${subIndex}`;
+          subKey = `${projKey}-ST-${subTeamCode}-${mtCode}-${subIndex}`;
         } else {
+
           invalidTasksCount++;
         }
 
@@ -1599,6 +1688,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           existingSub.isCompleted = (status === 'DONE');
           existingSub.startDate = taskStartDate;
           existingSub.dueDate = taskDueDate;
+          existingSub.durationDays = calculatedDuration || null;
           if (matchedAssignee) {
             existingSub.assigneeId = matchedAssignee._id;
             existingSub.assigneeName = matchedAssignee.name;
@@ -1616,6 +1706,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
             isCompleted: (status === 'DONE'),
             startDate: taskStartDate,
             dueDate: taskDueDate,
+            durationDays: calculatedDuration || null,
             assigneeId: matchedAssignee ? matchedAssignee._id : null,
             assigneeName: matchedAssignee ? matchedAssignee.name : (rawAssignee || ''),
             assigneeEmail: matchedAssignee ? matchedAssignee.email : '',
@@ -1625,10 +1716,6 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           };
           if (isSubValidTeam) {
             parentTask.subtasks.push(subtaskPayload);
-            // If subtask is created, parent main task assignee must be blank/unassigned
-            parentTask.assigneeId = null;
-            parentTask.assigneeName = null;
-            parentTask.assigneeEmail = null;
           }
         }
 
@@ -1701,8 +1788,11 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
     } else {
       newTasksCount++;
       taskNumber = runningCounter++;
-      key = `${projKey}-MT-${teamCode}-${taskNumber}`;
+      const taskMnemonic = generateMnemonicTaskCode(title, usedMnemonicCodes);
+      key = `${projKey}-MT-${teamCode}-${taskMnemonic}`;
+      usedMnemonicCodes.add(key);
     }
+
 
     const mainTaskObj = {
       action: !isValidTeam ? 'SKIP' : (isUpdate ? 'UPDATE' : 'CREATE'),
@@ -1756,6 +1846,7 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
           isCompleted: false,
           startDate: mainTaskObj.startDate,
           dueDate: mainTaskObj.dueDate,
+          durationDays: mainTaskObj.durationDays || null,
           assigneeId: mainTaskObj.assigneeId,
           createdBy: userId,
           createdAt: new Date(),
@@ -1801,6 +1892,12 @@ const processImportRows = async (projectId, rows, options = {}, user) => {
       sprintMeta.taskCount++;
       sprintMeta.storyPoints += storyPoints;
     }
+  });
+
+  // Group unknown assignee warnings so it doesn't flood every single line
+  unknownAssigneesMap.forEach((rowNums, assign) => {
+    const rowList = rowNums.length <= 4 ? `Row ${rowNums.join(', ')}` : `${rowNums.length} rows (Row ${rowNums.slice(0, 3).join(', ')}...)`;
+    warnings.push(`Assignee "${assign}" not found in project (${rowList}). Task will be created as Unassigned (assignee can be added later).`);
   });
 
   return {
@@ -2289,7 +2386,7 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   });
 
   // Column headers matching user-specified hierarchy:
-  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks
+  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks | Start Date | End Date | Duration
   worksheet.columns = [
     { header: 'S.No', key: 'sNo', width: 10 },
     { header: 'Project', key: 'project', width: 24 },
@@ -2299,6 +2396,8 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
     { header: 'Level 3 – Mini Tasks', key: 'level3', width: 38 },
     { header: 'Level 4 – Micro Tasks', key: 'level4', width: 38 },
     { header: 'Task Description', key: 'desc', width: 44 },
+    { header: 'Start Date', key: 'startDate', width: 16 },
+    { header: 'End Date', key: 'dueDate', width: 16 },
     { header: 'Duration (Days)', key: 'duration', width: 16 },
     { header: 'Priority', key: 'priority', width: 14 },
     { header: 'Status', key: 'status', width: 16 },
@@ -2317,11 +2416,25 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   worksheet.getRow(1).height = 24;
   worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
 
-  // Starter rows pre-filled with real Project Name and Sprint Name
+  // Set standard date formatting on Start Date and End Date columns
+  worksheet.getColumn('startDate').numFmt = 'YYYY-MM-DD';
+  worksheet.getColumn('dueDate').numFmt = 'YYYY-MM-DD';
+
+  // Starter rows pre-filled with real Project Name, Sprint Name, and realistic Start & End Dates
   const activeSprint = sprints.find(s => s.status === 'ACTIVE');
   const firstSprint = activeSprint?.name || sprintOptions[0] || 'Sprint 1';
   const firstTeam = teamOptions[0] || '';
   const firstAssignee = assigneeOptions[0] || '';
+
+  const today = new Date();
+  const addDays = (d, days) => new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
+
+  const d1Start = formatDateStr(today);
+  const d1End = formatDateStr(addDays(today, 2));
+  const d2Start = formatDateStr(addDays(today, 3));
+  const d2End = formatDateStr(addDays(today, 4));
+  const d3Start = formatDateStr(addDays(today, 5));
+  const d3End = formatDateStr(addDays(today, 8));
 
   worksheet.addRow({
     sNo: 1,
@@ -2332,6 +2445,8 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
     level3: 'Figma Mockup & Specs',
     level4: 'Create responsive mockup',
     desc: 'Design responsive login UI in Figma',
+    startDate: d1Start,
+    dueDate: d1End,
     duration: 2,
     priority: 'HIGH',
     status: 'TODO',
@@ -2349,6 +2464,8 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
     level3: 'JWT Auth Module',
     level4: 'Write unit tests for JWT validator',
     desc: 'Check edge cases and token expiry',
+    startDate: d2Start,
+    dueDate: d2End,
     duration: 1,
     priority: 'MEDIUM',
     status: 'TODO',
@@ -2366,6 +2483,8 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
     level3: 'Navigation sidebar',
     level4: '',
     desc: 'Primary dashboard overview and navigation',
+    startDate: d3Start,
+    dueDate: d3End,
     duration: 3,
     priority: 'MEDIUM',
     status: 'TODO',
@@ -2375,6 +2494,8 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
   });
 
   // Apply interactive Data Validations (Dropdowns) to rows 2 to 500
+  // Column alignment:
+  // C: Sprint | L: Priority | M: Status | N: Team | O: Assignee
   const sprintLastRow = Math.max(sprintOptions.length + 1, 2);
   const teamLastRow = Math.max(teamOptions.length + 1, 2);
   const assigneeLastRow = Math.max(assigneeOptions.length + 1, 2);
@@ -2389,32 +2510,32 @@ const downloadProjectExcelTemplate = asyncHandler(async (req, res) => {
       };
     }
 
-    // 2. Priority dropdown (Col J)
-    worksheet.getCell(`J${r}`).dataValidation = {
+    // 2. Priority dropdown (Col L)
+    worksheet.getCell(`L${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"LOW,MEDIUM,HIGH,URGENT"']
     };
 
-    // 3. Status dropdown (Col K)
-    worksheet.getCell(`K${r}`).dataValidation = {
+    // 3. Status dropdown (Col M)
+    worksheet.getCell(`M${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"TODO,IN_PROGRESS,IN_REVIEW,DONE,BACKLOG"']
     };
 
-    // 4. Team dropdown from project's real teams (Col L)
+    // 4. Team dropdown from project's real teams (Col N)
     if (teamOptions.length > 0) {
-      worksheet.getCell(`L${r}`).dataValidation = {
+      worksheet.getCell(`N${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$B$2:$B$${teamLastRow}`]
       };
     }
 
-    // 5. Assignee dropdown from project's real members (Col M)
+    // 5. Assignee dropdown from project's real members (Col O)
     if (assigneeOptions.length > 0) {
-      worksheet.getCell(`M${r}`).dataValidation = {
+      worksheet.getCell(`O${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$C$2:$C$${assigneeLastRow}`]
@@ -2686,7 +2807,7 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
   });
 
   // Main worksheet column headers matching user-specified hierarchy:
-  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks
+  // Project | Sprint | Level 1 – Main Task | Level 2 – Subtask | Level 3 – Mini Tasks | Level 4 – Micro Tasks | Start Date | End Date | Duration
   worksheet.columns = [
     { header: 'S.No', key: 'sNo', width: 10 },
     { header: 'Project', key: 'project', width: 24 },
@@ -2696,6 +2817,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
     { header: 'Level 3 – Mini Tasks', key: 'level3', width: 38 },
     { header: 'Level 4 – Micro Tasks', key: 'level4', width: 38 },
     { header: 'Task Description', key: 'desc', width: 44 },
+    { header: 'Start Date', key: 'startDate', width: 16 },
+    { header: 'End Date', key: 'dueDate', width: 16 },
     { header: 'Duration (Days)', key: 'duration', width: 16 },
     { header: 'Priority', key: 'priority', width: 14 },
     { header: 'Status', key: 'status', width: 16 },
@@ -2712,6 +2835,9 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
   };
   worksheet.getRow(1).height = 24;
   worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+  worksheet.getColumn('startDate').numFmt = 'YYYY-MM-DD';
+  worksheet.getColumn('dueDate').numFmt = 'YYYY-MM-DD';
 
   let totalRowsAdded = 0;
   let currentMainSeq = startingSerial - 1;
@@ -2734,6 +2860,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
       level3: '',
       level4: '',
       desc: '',
+      startDate: '',
+      dueDate: '',
       duration: 1,
       priority: 'MEDIUM',
       status: 'TODO',
@@ -2765,9 +2893,10 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
       const taskNum = currentMainSeq;
 
       let mainKey = task.key;
-      if (!mainKey || !/^[^-]+-MT-[A-Z0-9]+-\d+$/.test(mainKey)) {
+      if (!mainKey || !/^[^-]+-MT-[A-Z0-9]+-[A-Z0-9]+$/.test(mainKey)) {
         mainKey = `${projKey}-MT-${teamCode}-${taskNum}`;
       }
+      const mtCode = extractTaskMnemonic(mainKey, taskNum);
 
       const hasSubtasks = Array.isArray(task.subtasks) && task.subtasks.length > 0;
 
@@ -2781,6 +2910,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
           level3: '',
           level4: '',
           desc: task.description || '',
+          startDate: formatDateStr(task.startDate),
+          dueDate: formatDateStr(task.dueDate),
           duration: durationDays,
           priority: task.priority || 'MEDIUM',
           status: task.status || 'TODO',
@@ -2802,8 +2933,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
 
           const subtaskIndex = sIdx + 1;
           let subKey = st.key;
-          if (!subKey || !/^[^-]+-ST-[A-Z0-9]+-\d+-\d+$/.test(subKey)) {
-            subKey = `${projKey}-ST-${teamCode}-${taskNum}-${subtaskIndex}`;
+          if (!subKey || !/^[^-]+-ST-[A-Z0-9]+-[A-Z0-9]+-\d+$/.test(subKey)) {
+            subKey = `${projKey}-ST-${teamCode}-${mtCode}-${subtaskIndex}`;
           }
 
           const miniList = (Array.isArray(st.minitasks) && st.minitasks.length > 0)
@@ -2821,6 +2952,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
               level3: '',
               level4: '',
               desc: st.description || '',
+              startDate: formatDateStr(st.startDate || task.startDate),
+              dueDate: formatDateStr(st.dueDate || task.dueDate),
               duration: stDuration,
               priority: st.priority || task.priority || 'MEDIUM',
               status: st.status || (st.isCompleted ? 'DONE' : 'TODO'),
@@ -2842,8 +2975,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
 
               const miniIndex = mIdx + 1;
               let miniKey = mini.key;
-              if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-\d+-\d+-\d+$/.test(miniKey)) {
-                miniKey = `${projKey}-MIN-${teamCode}-${taskNum}-${subtaskIndex}-${miniIndex}`;
+              if (!miniKey || !/^[^-]+-MIN-[A-Z0-9]+-[A-Z0-9]+-\d+-\d+$/.test(miniKey)) {
+                miniKey = `${projKey}-MIN-${teamCode}-${mtCode}-${subtaskIndex}-${miniIndex}`;
               }
 
               const microList = Array.isArray(mini.microtasks) ? mini.microtasks : [];
@@ -2859,6 +2992,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
                   level3: mini.title,
                   level4: '',
                   desc: mini.description || '',
+                  startDate: formatDateStr(mini.startDate || st.startDate || task.startDate),
+                  dueDate: formatDateStr(mini.dueDate || st.dueDate || task.dueDate),
                   duration: miniDuration,
                   priority: mini.priority || task.priority || 'MEDIUM',
                   status: mini.status || (mini.isCompleted ? 'DONE' : 'TODO'),
@@ -2880,9 +3015,10 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
 
                   const microIndex = micIdx + 1;
                   let micKey = mic.key;
-                  if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-\d+-\d+-\d+-\d+$/.test(micKey)) {
-                    micKey = `${projKey}-MIC-${teamCode}-${taskNum}-${subtaskIndex}-${miniIndex}-${microIndex}`;
+                  if (!micKey || !/^[^-]+-MIC-[A-Z0-9]+-[A-Z0-9]+-\d+-\d+-\d+$/.test(micKey)) {
+                    micKey = `${projKey}-MIC-${teamCode}-${mtCode}-${subtaskIndex}-${miniIndex}-${microIndex}`;
                   }
+
 
                   worksheet.addRow({
                     sNo: globalRowSNo++,
@@ -2893,6 +3029,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
                     level3: mini.title,
                     level4: mic.title,
                     desc: mic.description || '',
+                    startDate: formatDateStr(mic.startDate || mini.startDate || st.startDate || task.startDate),
+                    dueDate: formatDateStr(mic.dueDate || mini.dueDate || st.dueDate || task.dueDate),
                     duration: micDuration,
                     priority: mic.priority || task.priority || 'MEDIUM',
                     status: mic.status || (mic.isCompleted ? 'DONE' : 'TODO'),
@@ -2911,6 +3049,8 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
   }
 
   // Apply interactive Data Validations
+  // Column alignment:
+  // C: Sprint | L: Priority | M: Status | N: Team | O: Assignee
   const maxRow = Math.max(totalRowsAdded + 100, 500);
   const sprintLastRow = Math.max(sprintOptions.length + 1, 2);
   const teamLastRow = Math.max(teamOptions.length + 1, 2);
@@ -2925,29 +3065,29 @@ const exportProjectExcel = asyncHandler(async (req, res) => {
         formulae: [`Project_Dropdown_Data!$A$2:$A$${sprintLastRow}`]
       };
     }
-    // 2. Priority dropdown (Col J)
-    worksheet.getCell(`J${r}`).dataValidation = {
+    // 2. Priority dropdown (Col L)
+    worksheet.getCell(`L${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"LOW,MEDIUM,HIGH,URGENT"']
     };
-    // 3. Status dropdown (Col K)
-    worksheet.getCell(`K${r}`).dataValidation = {
+    // 3. Status dropdown (Col M)
+    worksheet.getCell(`M${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: ['"TODO,IN_PROGRESS,IN_REVIEW,DONE,BACKLOG"']
     };
-    // 4. Team dropdown (Col L)
+    // 4. Team dropdown (Col N)
     if (teamOptions.length > 0) {
-      worksheet.getCell(`L${r}`).dataValidation = {
+      worksheet.getCell(`N${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$B$2:$B$${teamLastRow}`]
       };
     }
-    // 5. Assignee dropdown (Col M)
+    // 5. Assignee dropdown (Col O)
     if (assigneeOptions.length > 0) {
-      worksheet.getCell(`M${r}`).dataValidation = {
+      worksheet.getCell(`O${r}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`Project_Dropdown_Data!$C$2:$C$${assigneeLastRow}`]

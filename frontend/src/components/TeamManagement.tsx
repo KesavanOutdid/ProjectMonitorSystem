@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import { usePermissionStore } from '../store/permissionStore';
+import { formatRole } from '../lib/formatters';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { InviteModal } from './InviteModal';
 import {
@@ -942,7 +943,7 @@ export const TeamManagement: React.FC = () => {
                       const isDesignatedLead = (m.role || '').toUpperCase() === 'TEAM_LEAD';
                       return (
                         <option key={m._id} value={m._id}>
-                          {m.name} ({m.email}) {isDesignatedLead ? '• [Team Lead]' : `• [${m.role || 'Member'}]`}
+                          {m.name} ({m.email}) {isDesignatedLead ? '• [Team Lead]' : `• [${formatRole(m.role)}]`}
                         </option>
                       );
                     })}

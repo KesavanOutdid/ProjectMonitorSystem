@@ -83,7 +83,7 @@ router.get('/:projectId/velocity', getProjectVelocity);
 router.route('/:projectId/teams')
   .get(getProjectTeams)
   .post(
-    authorize(USER_ROLES.SUPER_ADMIN, USER_ROLES.ORG_ADMIN),
+    authorize(USER_ROLES.SUPER_ADMIN, USER_ROLES.ORG_ADMIN, USER_ROLES.PROJECT_MANAGER),
     createProjectTeam
   );
 router.route('/:projectId/teams/:teamId')

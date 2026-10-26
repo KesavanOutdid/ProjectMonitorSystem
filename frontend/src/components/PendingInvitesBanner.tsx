@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatRole } from '../lib/formatters';
 import {
   Bell,
   CheckCircle2,
@@ -115,7 +116,7 @@ export const PendingInvitesBanner: React.FC = () => {
                     Invitation Received
                   </span>
                   <span className="text-xs font-bold text-slate-300">
-                    Role: <strong className="text-white">{inv.role}</strong>
+                    Role: <strong className="text-white">{formatRole(inv.role)}</strong>
                   </span>
                 </div>
 

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { formatSprintStatus } from '../lib/formatters';
 import {
   Inbox,
   Search,
@@ -1098,7 +1099,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({ projectId }) => {
                       <option value="backlog">Product Backlog (No active sprint)</option>
                       {sprints.map((s: any) => (
                         <option key={s._id} value={s._id}>
-                          {s.name} {s.status === 'ACTIVE' ? '⭐ (Active Sprint)' : `(${s.status})`}
+                          {s.name} {s.status === 'ACTIVE' ? '⭐ (Active Sprint)' : `(${formatSprintStatus(s.status)})`}
                         </option>
                       ))}
                     </select>

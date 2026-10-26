@@ -120,6 +120,10 @@ const taskSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    durationDays: {
+      type: Number,
+      default: null
+    },
     team: {
       type: String,
       default: '',
@@ -210,6 +214,7 @@ const taskSchema = new mongoose.Schema(
         completedAt: { type: Date, default: null },
         startDate: { type: Date, default: null },
         dueDate: { type: Date, default: null },
+        durationDays: { type: Number, default: null },
         assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
         createdAt: { type: Date, default: Date.now },
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -226,6 +231,7 @@ const taskSchema = new mongoose.Schema(
             completedAt: { type: Date, default: null },
             startDate: { type: Date, default: null },
             dueDate: { type: Date, default: null },
+            durationDays: { type: Number, default: null },
             assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
             createdAt: { type: Date, default: Date.now },
             createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -242,6 +248,7 @@ const taskSchema = new mongoose.Schema(
                 completedAt: { type: Date, default: null },
                 startDate: { type: Date, default: null },
                 dueDate: { type: Date, default: null },
+                durationDays: { type: Number, default: null },
                 assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
                 createdAt: { type: Date, default: Date.now },
                 createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -262,6 +269,7 @@ const taskSchema = new mongoose.Schema(
             completedAt: { type: Date, default: null },
             startDate: { type: Date, default: null },
             dueDate: { type: Date, default: null },
+            durationDays: { type: Number, default: null },
             assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
             createdAt: { type: Date, default: Date.now },
             createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
