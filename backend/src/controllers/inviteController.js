@@ -29,11 +29,22 @@ const generateTokens = (userId) => {
 
 // Helper to dynamically resolve client frontend URL from request body, headers (Origin / X-Forwarded-Host), or env fallback
 const resolveFrontendUrl = (req) => {
+  const envFrontend = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/+$/, '') : '';
+  const isEnvConfiguredNonLocal = envFrontend && !envFrontend.includes('localhost') && !envFrontend.includes('127.0.0.1');
+
   if (req.body && typeof req.body.frontendUrl === 'string' && req.body.frontendUrl.startsWith('http')) {
-    return req.body.frontendUrl.replace(/\/+$/, '');
+    const customUrl = req.body.frontendUrl.replace(/\/+$/, '');
+    if ((customUrl.includes('localhost') || customUrl.includes('127.0.0.1')) && isEnvConfiguredNonLocal) {
+      return envFrontend;
+    }
+    return customUrl;
   }
   if (req.headers.origin && typeof req.headers.origin === 'string' && req.headers.origin.startsWith('http')) {
-    return req.headers.origin.replace(/\/+$/, '');
+    const origin = req.headers.origin.replace(/\/+$/, '');
+    if ((origin.includes('localhost') || origin.includes('127.0.0.1')) && isEnvConfiguredNonLocal) {
+      return envFrontend;
+    }
+    return origin;
   }
   const xForwardedHost = req.headers['x-forwarded-host'];
   if (xForwardedHost) {
@@ -43,10 +54,13 @@ const resolveFrontendUrl = (req) => {
   if (req.headers.referer) {
     try {
       const url = new URL(req.headers.referer);
+      if ((url.origin.includes('localhost') || url.origin.includes('127.0.0.1')) && isEnvConfiguredNonLocal) {
+        return envFrontend;
+      }
       return url.origin;
     } catch (_) {}
   }
-  return (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  return envFrontend || 'http://localhost:3000';
 };
 
 // @desc    Send an Invitation to a Project and/or Workspace

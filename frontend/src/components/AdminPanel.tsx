@@ -164,21 +164,35 @@ export const AdminPanel: React.FC = () => {
     }
   });
 
-  const handleCopyLink = (tokenOrUrl: string) => {
-    let inviteUrl = '';
+  const getShareableBaseUrl = () => {
     if (typeof window !== 'undefined') {
-      if (!tokenOrUrl.startsWith('http')) {
-        inviteUrl = `${window.location.origin}/invite/${tokenOrUrl}`;
-      } else {
-        try {
-          const url = new URL(tokenOrUrl);
-          inviteUrl = `${window.location.origin}${url.pathname}${url.search}`;
-        } catch (_) {
-          inviteUrl = tokenOrUrl;
-        }
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const configuredFrontend = process.env.NEXT_PUBLIC_FRONTEND_URL;
+      const lanIp = process.env.NEXT_PUBLIC_BACKEND_IP;
+      if (configuredFrontend && configuredFrontend.startsWith('http')) {
+        return configuredFrontend.replace(/\/+$/, '');
       }
+      if (isLocalhost && lanIp && lanIp !== 'localhost' && lanIp !== '127.0.0.1') {
+        const port = window.location.port ? `:${window.location.port}` : ':3000';
+        return `${window.location.protocol}//${lanIp}${port}`;
+      }
+      return window.location.origin;
+    }
+    return process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
+  };
+
+  const handleCopyLink = (tokenOrUrl: string) => {
+    const baseUrl = getShareableBaseUrl();
+    let inviteUrl = '';
+    if (!tokenOrUrl.startsWith('http')) {
+      inviteUrl = `${baseUrl}/invite/${tokenOrUrl}`;
     } else {
-      inviteUrl = tokenOrUrl;
+      try {
+        const url = new URL(tokenOrUrl);
+        inviteUrl = `${baseUrl}${url.pathname}${url.search}`;
+      } catch (_) {
+        inviteUrl = tokenOrUrl;
+      }
     }
     navigator.clipboard.writeText(inviteUrl);
     setCopiedToken(tokenOrUrl);

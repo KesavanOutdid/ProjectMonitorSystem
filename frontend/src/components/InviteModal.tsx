@@ -268,14 +268,27 @@ export const InviteModal: React.FC<InviteModalProps> = ({
   });
 
   const getNormalizedInviteLink = (rawLink?: string, token?: string) => {
+    let baseOrigin = '';
     if (typeof window !== 'undefined') {
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const configuredFrontend = process.env.NEXT_PUBLIC_FRONTEND_URL;
+      const lanIp = process.env.NEXT_PUBLIC_BACKEND_IP;
+      if (configuredFrontend && configuredFrontend.startsWith('http')) {
+        baseOrigin = configuredFrontend.replace(/\/+$/, '');
+      } else if (isLocalhost && lanIp && lanIp !== 'localhost' && lanIp !== '127.0.0.1') {
+        const port = window.location.port ? `:${window.location.port}` : ':3000';
+        baseOrigin = `${window.location.protocol}//${lanIp}${port}`;
+      } else {
+        baseOrigin = window.location.origin;
+      }
+
       if (token) {
-        return `${window.location.origin}/invite/${token}`;
+        return `${baseOrigin}/invite/${token}`;
       }
       if (rawLink) {
         try {
           const url = new URL(rawLink);
-          return `${window.location.origin}${url.pathname}${url.search}`;
+          return `${baseOrigin}${url.pathname}${url.search}`;
         } catch (_) {
           return rawLink;
         }
